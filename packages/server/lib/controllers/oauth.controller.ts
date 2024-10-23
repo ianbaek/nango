@@ -836,7 +836,7 @@ class OAuthController {
         account: DBTeam,
         logCtx: LogContext
     ) {
-        const { code } = req.query;
+        const code = req.query['code'] ?? req.query['authorization_code'];
         const providerConfigKey = session.providerConfigKey;
         const connectionId = session.connectionId;
         const channel = session.webSocketClientId;

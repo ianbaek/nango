@@ -71,6 +71,21 @@ export async function getFreshOAuth2Credentials(
         };
     }
     const simpleOAuth2ClientConfig = getSimpleOAuth2ClientConfig(config, provider, connection.connection_config);
+    let refreshConfig = simpleOAuth2ClientConfig;
+
+    // If provider has a separate refresh URL, create a new config for it
+    if (provider.refresh_url) {
+        const refreshUrl = makeUrl(provider.refresh_url, connection.connection_config, provider.token_url_encode);
+        refreshConfig = {
+            ...simpleOAuth2ClientConfig,
+            auth: {
+                ...simpleOAuth2ClientConfig.auth,
+                tokenHost: refreshUrl.origin,
+                tokenPath: refreshUrl.pathname
+            }
+        };
+    }
+
     if (provider.token_request_auth_method === 'basic') {
         const headers = {
             ...simpleOAuth2ClientConfig.http?.headers,
@@ -78,7 +93,7 @@ export async function getFreshOAuth2Credentials(
         };
         simpleOAuth2ClientConfig.http.headers = headers;
     }
-    const client = new AuthorizationCode(simpleOAuth2ClientConfig);
+    const client = new AuthorizationCode(refreshConfig);
     const oldAccessToken = client.createToken({
         access_token: credentials.access_token,
         expires_at: credentials.expires_at,

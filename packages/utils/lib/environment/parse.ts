@@ -28,6 +28,10 @@ export const ENVS = z.object({
     NANGO_SERVER_WEBSOCKETS_PATH: z.string().optional(),
     NANGO_ADMIN_INVITE_TOKEN: z.string().optional(),
 
+    // Connect
+    NANGO_PUBLIC_CONNECT_URL: z.string().url().optional(),
+    NANGO_CONNECT_UI_PORT: z.coerce.number().optional().default(3009),
+
     // Persist
     PERSIST_SERVICE_URL: z.string().url().optional(),
     NANGO_PERSIST_PORT: z.coerce.number().optional().default(3007),
@@ -39,26 +43,78 @@ export const ENVS = z.object({
     ORCHESTRATOR_DATABASE_SCHEMA: z.string().optional().default('nango_scheduler'),
 
     // Jobs
-    JOBS_SERVICE_URL: z.string().url().optional(),
+    JOBS_SERVICE_URL: z.string().url().optional().default('http://localhost:3005'),
     NANGO_JOBS_PORT: z.coerce.number().optional().default(3005),
+    PROVIDERS_URL: z.string().url().optional(),
+    PROVIDERS_RELOAD_INTERVAL: z.coerce.number().optional().default(60000),
 
     // Runner
     RUNNER_TYPE: z.enum(['LOCAL', 'REMOTE', 'RENDER']).default('LOCAL'),
     RUNNER_SERVICE_URL: z.string().url().optional(),
     NANGO_RUNNER_PATH: z.string().optional(),
     RUNNER_OWNER_ID: z.string().optional(),
-    RUNNER_ID: z.string().optional(),
+    RUNNER_ID: z.string().optional(), // TODO: remove once fleet is fully released
     IDLE_MAX_DURATION_MS: z.coerce.number().default(0),
+    RUNNER_NODE_ID: z.coerce.number().optional(),
+    RUNNER_URL: z.string().url().optional(),
 
-    // Demo
-    DEFAULT_GITHUB_CLIENT_ID: z.string().optional(),
-    DEFAULT_GITHUB_CLIENT_SECRET: z.string().optional(),
+    // FLEET
+    FLEET_TIMEOUT_PENDING_MS: z.coerce
+        .number()
+        .optional()
+        .default(15 * 60 * 1000), // 15 minutes
+    FLEET_TIMEOUT_STARTING_MS: z.coerce
+        .number()
+        .optional()
+        .default(5 * 60 * 1000), // 5 minutes
+    FLEET_TIMEOUT_FINISHING_MS: z.coerce
+        .number()
+        .optional()
+        .default(24 * 60 * 60 * 1000), // 24 hours
+    FLEET_TIMEOUT_IDLE_MS: z.coerce
+        .number()
+        .optional()
+        .default(15 * 60 * 1000), // 15 minutes
+    FLEET_TIMEOUT_TERMINATED_MS: z.coerce
+        .number()
+        .optional()
+        .default(24 * 60 * 60 * 1000), // 24 hours
+    FLEET_TIMEOUT_ERROR_MS: z.coerce
+        .number()
+        .optional()
+        .default(24 * 60 * 60 * 1000), // 24 hours
+    FLEET_TIMEOUT_GET_RUNNING_NODE_MS: z.coerce
+        .number()
+        .optional()
+        .default(60 * 1000), // 1 minute
+    FLEET_RETRY_DELAY_GET_RUNNING_NODE_MS: z.coerce.number().optional().default(1000), // 1 sec
+    FLEET_SUPERVISOR_TIMEOUT_TICK_MS: z.coerce
+        .number()
+        .optional()
+        .default(60 * 1000), // 1 minute
+    FLEET_SUPERVISOR_TIMEOUT_STOP_MS: z.coerce
+        .number()
+        .optional()
+        .default(60 * 1000), // 1 minute
+    FLEET_SUPERVISOR_RETRY_DELAY_MS: z.coerce
+        .number()
+        .optional()
+        .default(5 * 1000), // 5 seconds
+    FLEET_SUPERVISOR_WAIT_TICK_MS: z.coerce.number().optional().default(1000), // 1 sec
+    FLEET_TIMEOUT_HEALTHY_MS: z.coerce
+        .number()
+        .optional()
+        .default(2 * 60 * 1000), // 2 minutes
 
     // --- Third parties
     // AWS
     AWS_REGION: z.string().optional(),
     AWS_BUCKET_NAME: z.string().optional(),
     AWS_ACCESS_KEY_ID: z.string().optional(),
+
+    // BQ
+    GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
+    FLAG_BIG_QUERY_EXPORT_ENABLED: bool,
 
     // Datadog
     DD_ENV: z.string().optional(),
@@ -74,6 +130,7 @@ export const ENVS = z.object({
 
     // Mailgun
     MAILGUN_API_KEY: z.string().optional(),
+    MAILGUN_URL: z.string().url().optional(),
 
     // Postgres
     NANGO_DATABASE_URL: z.string().url().optional(),
@@ -87,12 +144,16 @@ export const ENVS = z.object({
     NANGO_ENCRYPTION_KEY: z
         .string({
             required_error:
-                'To learn more about NANGO_ENCRYPTION_KEY, please read the doc at https://docs.nango.dev/host/self-host/self-hosting-instructions#encrypt-sensitive-data'
+                'To learn more about NANGO_ENCRYPTION_KEY, please read the doc at https://docs.nango.dev/guides/self-hosting/free-self-hosting/overview#encrypt-sensitive-data'
         })
         .optional(),
-    NANGO_DB_MIGRATION_FOLDER: z.string().optional(),
     NANGO_DB_SCHEMA: z.string().optional().default('nango'),
     NANGO_DB_ADDITIONAL_SCHEMAS: z.string().optional(),
+    NANGO_DB_APPLICATION_NAME: z.string().optional().default('[unknown]'),
+
+    // PostHog
+    PUBLIC_POSTHOG_KEY: z.string().optional(),
+    PUBLIC_POSTHOG_HOST: z.string().optional(),
 
     // Records
     RECORDS_DATABASE_URL: z.string().url().optional(),
@@ -103,15 +164,21 @@ export const ENVS = z.object({
 
     // Render
     RENDER_API_KEY: z.string().optional(),
+    RENDER_SERVICE_CREATION_MAX_PER_MINUTE: z.coerce.number().optional(),
+    RENDER_SERVICE_CREATION_MAX_PER_HOUR: z.coerce.number().optional(),
+    RENDER_WAIT_WHEN_THROTTLED_MS: z.coerce.number().default(1000),
     IS_RENDER: bool,
+
+    // Sentry
+    PUBLIC_SENTRY_KEY: z.string().optional(),
 
     // Slack
     NANGO_ADMIN_CONNECTION_ID: z.string().optional(),
     NANGO_SLACK_INTEGRATION_KEY: z.string().optional(),
     NANGO_ADMIN_UUID: z.string().uuid().optional(),
 
-    // Sentry
-    SENTRY_DNS: z.string().url().optional(),
+    // Internal API
+    NANGO_INTERNAL_API_KEY: z.string().optional(),
 
     // ----- Others
     SERVER_RUN_MODE: z.enum(['DOCKERIZED', '']).optional(),

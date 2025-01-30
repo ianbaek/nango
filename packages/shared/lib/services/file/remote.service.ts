@@ -8,8 +8,8 @@ import { NangoError } from '../../utils/error.js';
 import errorManager, { ErrorSourceEnum } from '../../utils/error.manager.js';
 import { LogActionEnum } from '../../models/Telemetry.js';
 import type { ServiceResponse } from '../../models/Generic.js';
-import { nangoConfigFile } from '../nango-config.service.js';
 import localFileService from './local.service.js';
+import { nangoConfigFile } from '@nangohq/nango-yaml';
 
 let client: S3Client | null = null;
 let useS3 = !isLocal && !isTest;
@@ -55,8 +55,8 @@ class RemoteFileService {
             );
 
             return fileName;
-        } catch (e) {
-            errorManager.report(e, {
+        } catch (err) {
+            errorManager.report(err, {
                 source: ErrorSourceEnum.PLATFORM,
                 environmentId,
                 operation: LogActionEnum.FILE,
@@ -103,8 +103,8 @@ class RemoteFileService {
                 }
                 return '_LOCAL_FILE_';
             }
-        } catch (e) {
-            errorManager.report(e, {
+        } catch (err) {
+            errorManager.report(err, {
                 source: ErrorSourceEnum.PLATFORM,
                 environmentId,
                 operation: LogActionEnum.FILE,
@@ -115,6 +115,10 @@ class RemoteFileService {
 
             return null;
         }
+    }
+
+    async getPublicTemplateJsonSchemaFile(integrationName: string, environmentId: number): Promise<string | null> {
+        return this.getFile(`${this.publicRoute}/${integrationName}/.nango/schema.json`, environmentId);
     }
 
     getFile(fileName: string, environmentId: number): Promise<string> {

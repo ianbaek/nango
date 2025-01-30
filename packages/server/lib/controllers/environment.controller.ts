@@ -8,7 +8,6 @@ import {
     connectionService,
     errorManager,
     getWebsocketsPath,
-    getOauthCallbackUrl,
     getGlobalWebhookReceiveUrl,
     generateSlackConnectionId,
     externalWebhookService
@@ -22,12 +21,13 @@ export interface EnvironmentAndAccount {
     webhook_settings: ExternalWebhook | null;
     host: string;
     uuid: string;
+    name: string;
     email: string;
     slack_notifications_channel: string | null;
 }
 
 class EnvironmentController {
-    async getEnvironment(_: Request, res: Response<any, Required<RequestLocals>>, next: NextFunction) {
+    async getEnvironment(_: Request, res: Response<{ environmentAndAccount: EnvironmentAndAccount }, Required<RequestLocals>>, next: NextFunction) {
         try {
             const { environment, account, user } = res.locals;
 
@@ -44,7 +44,7 @@ class EnvironmentController {
                 }
             }
 
-            environment.callback_url = await getOauthCallbackUrl(environment.id);
+            environment.callback_url = await environmentService.getOauthCallbackUrl(environment.id);
             const webhookBaseUrl = getGlobalWebhookReceiveUrl();
             environment.webhook_receive_url = `${webhookBaseUrl}/${environment.uuid}`;
 
@@ -74,10 +74,11 @@ class EnvironmentController {
             res.status(200).send({
                 environmentAndAccount: {
                     environment,
-                    env_variables: environmentVariables,
+                    env_variables: environmentVariables || [],
                     webhook_settings: webhookSettings,
                     host: baseUrl,
                     uuid: account.uuid,
+                    name: account.name,
                     email: user.email,
                     slack_notifications_channel
                 }
@@ -87,7 +88,7 @@ class EnvironmentController {
         }
     }
 
-    async getHmacDigest(req: Request, res: Response<any, Required<RequestLocals>>, next: NextFunction) {
+    getHmacDigest(req: Request, res: Response<any, Required<RequestLocals>>, next: NextFunction) {
         try {
             const { environment } = res.locals;
             const { provider_config_key: providerConfigKey, connection_id: connectionId } = req.query;
@@ -103,7 +104,7 @@ class EnvironmentController {
             }
 
             if (environment.hmac_enabled && environment.hmac_key) {
-                const digest = await hmacService.digest(environment.id, providerConfigKey as string, connectionId as string);
+                const digest = hmacService.computeDigest({ key: environment.hmac_key, values: [providerConfigKey as string, connectionId as string] });
                 res.status(200).send({ hmac_digest: digest });
             } else {
                 res.status(200).send({ hmac_digest: null });
@@ -132,14 +133,13 @@ class EnvironmentController {
                 return;
             }
 
-            const digest = await hmacService.digest(info.environmentId, integration_key, connectionId as string);
-
             const environment = await environmentService.getById(info.environmentId);
-
             if (!environment) {
                 errorManager.errRes(res, 'account_not_found');
                 return;
             }
+
+            const digest = hmacService.computeDigest({ key: environment.hmac_key!, values: [integration_key, connectionId as string] });
 
             res.status(200).send({ hmac_digest: digest, public_key: environment.public_key, integration_key });
         } catch (err) {

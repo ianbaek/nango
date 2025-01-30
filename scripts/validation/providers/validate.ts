@@ -19,7 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const pathSchema = path.join(__dirname, 'schema.json');
-const pathProviders = path.join(__dirname, '../../../packages/shared/providers.yaml');
+const pathProviders = path.join(__dirname, '../../../packages/providers/providers.yaml');
 
 // Schema
 const ajv = new Ajv({ allErrors: true, discriminator: true });
@@ -42,10 +42,18 @@ if (validator.errors) {
 }
 
 const invalidInterpolation = /(?<!(\$|]))\{/g;
-const match = [...providersYaml.toString().matchAll(invalidInterpolation)];
-if (match.length > 0) {
-    console.error(chalk.red('error'), 'providers.yaml contains interpolation errors. A `{` does not have a `$` in front of it.');
-    process.exit(1);
+for (const [providerKey, provider] of Object.entries(providersJson)) {
+    // Skip validation for 'sage-intacct' provider, we need this so that we can specify the element attribute
+    if (providerKey === 'sage-intacct') {
+        continue;
+    }
+    const { credentials, connection_config, ...providerWithoutSensitive } = provider;
+    const strippedProviderYaml = jsYaml.dump({ [providerKey]: providerWithoutSensitive });
+    const match = [...strippedProviderYaml.matchAll(invalidInterpolation)];
+    if (match.length > 0) {
+        console.error(chalk.red('error'), 'Provider', chalk.blue(providerKey), `contains interpolation errors. A \`{\` does not have a \`$\` in front of it.`);
+        process.exit(1);
+    }
 }
 
 console.log('✅ JSON schema valid');
@@ -74,9 +82,12 @@ console.log('✅ All providers are valid');
  * Validate one provider
  */
 function validateProvider(providerKey: string, provider: Provider) {
-    const filename = provider.docs.split('/').slice(-1)[0];
+    const filename = provider.docs.split('/').slice(-1)[0]; // filename could be different from providerConfigKey
     const mdx = path.join(docsPath, `${filename}.mdx`);
     const svg = path.join(svgPath, `${providerKey}.svg`);
+    const connectMdx = path.join(docsPath, `${providerKey}/connect.mdx`);
+    let hasValidConnect = false;
+    const headers = new Set<string>();
 
     if (!fs.existsSync(mdx)) {
         console.error(chalk.red('error'), chalk.blue(providerKey), `Documentation file not found`);
@@ -87,6 +98,26 @@ function validateProvider(providerKey: string, provider: Provider) {
         console.error(chalk.red('error'), chalk.blue(providerKey), `SVG file not found`);
         console.error(`Expected file: ${svg}`);
         error = true;
+    }
+    if (provider.docs_connect) {
+        if (!fs.existsSync(connectMdx)) {
+            console.error(chalk.red('error'), chalk.blue(providerKey), `Connect.mdx file not found`);
+            console.error(`Expected file: ${connectMdx}`);
+            error = true;
+        } else {
+            hasValidConnect = true;
+            const content = fs.readFileSync(connectMdx).toString();
+            const matched = content.matchAll(/^[#]+\sStep[a-zA-Z0-9:()._ -]+$/gim);
+            for (const match of matched) {
+                headers.add(
+                    match[0]
+                        .toLocaleLowerCase()
+                        .replace(/^[#]+ /, '#')
+                        .replaceAll(/\s/g, '-')
+                        .replaceAll(/[:()._]/g, '')
+                );
+            }
+        }
     }
 
     // Find all connectionConfig references
@@ -108,14 +139,50 @@ function validateProvider(providerKey: string, provider: Provider) {
                 continue;
             }
         }
+
+        // Check connection config validity
         for (const [key, schema] of Object.entries(provider.connection_config || [])) {
-            if (schema.doc_section && !provider.docs_connect) {
-                console.error(
-                    chalk.red('error'),
-                    chalk.blue(providerKey),
-                    `"connection_config > ${key}" defines a "doc_section" but has no "docs_connect" property`
-                );
-                error = true;
+            if (schema.doc_section) {
+                if (!provider.docs_connect) {
+                    console.error(
+                        chalk.red('error'),
+                        chalk.blue(providerKey),
+                        `"connection_config > ${key}" defines a "doc_section" but has no "docs_connect" property`
+                    );
+                    error = true;
+                } else if (hasValidConnect) {
+                    if (!headers.has(schema.doc_section)) {
+                        console.error(
+                            chalk.red('error'),
+                            chalk.blue(providerKey),
+                            `"connection_config > ${key} > doc_section" does not exist in ${providerKey}/connect.mdx`
+                        );
+                        error = true;
+                    }
+                }
+            }
+        }
+
+        // Check credentials validity
+        for (const [key, schema] of Object.entries(provider.credentials || [])) {
+            if (schema.doc_section) {
+                if (!provider.docs_connect) {
+                    console.error(
+                        chalk.red('error'),
+                        chalk.blue(providerKey),
+                        `"credentials > ${key}" defines a "doc_section" but has no "docs_connect" property`
+                    );
+                    error = true;
+                } else if (hasValidConnect) {
+                    if (!headers.has(schema.doc_section)) {
+                        console.error(
+                            chalk.red('error'),
+                            chalk.blue(providerKey),
+                            `"credentials > ${key} > doc_section" does not exist in ${providerKey}/connect.mdx`
+                        );
+                        error = true;
+                    }
+                }
             }
         }
     } else if (provider.connection_config) {
@@ -129,9 +196,9 @@ function validateProvider(providerKey: string, provider: Provider) {
             error = true;
         }
         if (!provider.proxy?.verification) {
-            console.warn(chalk.yellow('warning'), chalk.blue(providerKey), `do not have "proxy" > "verification" set`);
+            console.warn(chalk.yellow('warning'), chalk.blue(providerKey), `does not have "proxy" > "verification" set`);
         }
-    } else if (provider.auth_mode === 'BASIC') {
+    } else if (provider.auth_mode === 'BASIC' || provider.auth_mode === 'SIGNATURE') {
         if (!provider.credentials?.['username']) {
             console.warn(chalk.yellow('warning'), chalk.blue(providerKey), `"credentials" > "username" is not defined`);
         }
@@ -139,7 +206,11 @@ function validateProvider(providerKey: string, provider: Provider) {
             console.warn(chalk.yellow('warning'), chalk.blue(providerKey), `"credentials" > "password" is not defined`);
         }
         if (!provider.proxy?.verification) {
-            console.warn(chalk.yellow('warning'), chalk.blue(providerKey), `do not have "proxy" > "verification" set`);
+            console.warn(chalk.yellow('warning'), chalk.blue(providerKey), `does not have "proxy" > "verification" set`);
+        }
+    } else if (provider.auth_mode === 'TWO_STEP') {
+        if (!provider.credentials) {
+            console.warn(chalk.yellow('warning'), chalk.blue(providerKey), `"credentials" are not defined for TWO_STEP auth mode`);
         }
     } else {
         if (provider.credentials) {

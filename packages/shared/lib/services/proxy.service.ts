@@ -2,16 +2,16 @@ import { isAxiosError } from 'axios';
 import type { AxiosError, AxiosResponse, AxiosRequestConfig, ParamsSerializerOptions } from 'axios';
 import OAuth from 'oauth-1.0a';
 import * as crypto from 'node:crypto';
-import { axiosInstance as axios, SIGNATURE_METHOD } from '@nangohq/utils';
+import { axiosInstance as axios, SIGNATURE_METHOD, redactHeaders, redactURL } from '@nangohq/utils';
 import { backOff } from 'exponential-backoff';
 import FormData from 'form-data';
 import type { TbaCredentials, ApiKeyCredentials, BasicApiCredentials, TableauCredentials } from '../models/Auth.js';
-import type { HTTP_VERB, ServiceResponse } from '../models/Generic.js';
+import type { HTTP_METHOD, ServiceResponse } from '../models/Generic.js';
 import type { ResponseType, ApplicationConstructedProxyConfiguration, UserProvidedProxyConfiguration, InternalProxyConfiguration } from '../models/Proxy.js';
 
 import { interpolateIfNeeded, connectionCopyWithParsedConnectionConfig, mapProxyBaseUrlInterpolationFormat } from '../utils/utils.js';
 import { NangoError } from '../utils/error.js';
-import type { MessageRowInsert } from '@nangohq/types';
+import type { MessageRowInsert, RetryHeaderConfig } from '@nangohq/types';
 import { getProvider } from './providers.js';
 
 interface Logs {
@@ -71,66 +71,45 @@ class ProxyService {
             return { success: false, error: new NangoError('missing_provider_config_key'), response: null, logs };
         }
 
-        logs.push({
-            type: 'log',
-            level: 'debug',
-            createdAt: new Date().toISOString(),
-            message: `Connection id: '${connectionId}' and provider config key: '${providerConfigKey}' parsed and received successfully`
-        });
-
         let endpoint = passedEndpoint;
 
         let token;
         switch (connection.credentials.type) {
             case 'OAUTH2':
-                {
-                    const credentials = connection.credentials;
-                    token = credentials.access_token;
-                }
+            case 'APP': {
+                const credentials = connection.credentials;
+                token = credentials.access_token;
+                break;
+            }
+            case 'OAUTH2_CC':
+            case 'TWO_STEP':
+            case 'TABLEAU':
+            case 'JWT':
+            case 'SIGNATURE': {
+                const credentials = connection.credentials;
+                token = credentials.token;
+                break;
+            }
+            case 'BASIC':
+            case 'API_KEY':
+                token = connection.credentials;
                 break;
             case 'OAUTH1': {
                 const error = new Error('OAuth1 is not supported yet in the proxy.');
                 const nangoError = new NangoError('pass_through_error', error);
                 return { success: false, error: nangoError, response: null, logs };
             }
-            case 'BASIC':
-                token = connection.credentials;
+            case 'APP_STORE':
+            case 'CUSTOM':
+            case 'TBA':
+            case undefined:
+            case 'BILL': {
                 break;
-            case 'API_KEY':
-                token = connection.credentials;
-                break;
-            case 'APP':
-                {
-                    const credentials = connection.credentials;
-                    token = credentials.access_token;
-                }
-                break;
-            case 'OAUTH2_CC':
-                {
-                    const credentials = connection.credentials;
-                    token = credentials.token;
-                }
-                break;
-            case 'TABLEAU':
-                {
-                    const credentials = connection.credentials;
-                    token = credentials.token;
-                }
-                break;
-            case 'JWT':
-                {
-                    const credentials = connection.credentials;
-                    token = credentials.token;
-                }
-                break;
+            }
+            default: {
+                throw new Error(`Unhandled connection.credentials for: ${(connection.credentials as any).type}`);
+            }
         }
-
-        logs.push({
-            type: 'log',
-            level: 'debug',
-            createdAt: new Date().toISOString(),
-            message: 'Proxy: token retrieved successfully'
-        });
 
         const provider = getProvider(providerName);
         if (!provider) {
@@ -149,25 +128,18 @@ class ProxyService {
             return { success: false, error: new NangoError('missing_base_api_url'), response: null, logs };
         }
 
-        logs.push({
-            type: 'log',
-            level: 'debug',
-            createdAt: new Date().toISOString(),
-            message: `Proxy: API call configuration constructed successfully with the base api url set to ${baseUrlOverride || provider.proxy?.base_url}`
-        });
-
         if (!baseUrlOverride && provider.proxy?.base_url && endpoint.includes(provider.proxy.base_url)) {
             endpoint = endpoint.replace(provider.proxy.base_url, '');
         }
 
-        logs.push({
-            type: 'log',
-            level: 'debug',
-            createdAt: new Date().toISOString(),
-            message: `Endpoint set to ${endpoint} with retries set to ${retries} ${retryOn ? `and retryOn set to ${retryOn}` : ''}`
-        });
+        const headersCleaned: Record<string, string> = {};
+        if (headers) {
+            for (const [key, value] of Object.entries(headers)) {
+                headersCleaned[key.toLocaleLowerCase()] = value;
+            }
+        }
 
-        if (headers && headers['Content-Type'] === 'multipart/form-data') {
+        if (headersCleaned['content-type'] === 'multipart/form-data') {
             const formData = new FormData();
 
             Object.keys(data as any).forEach((key) => {
@@ -185,13 +157,13 @@ class ProxyService {
 
         const configBody: ApplicationConstructedProxyConfiguration = {
             endpoint,
-            method: method?.toUpperCase() as HTTP_VERB,
+            method: method?.toUpperCase() as HTTP_METHOD,
             provider,
             token: token || '',
             providerName,
             providerConfigKey,
             connectionId,
-            headers: headers as Record<string, string>,
+            headers: headersCleaned,
             data,
             retries: retries || 0,
             baseUrlOverride: baseUrlOverride as string,
@@ -276,8 +248,7 @@ class ProxyService {
     ): Promise<boolean> => {
         if (
             error.response?.status.toString().startsWith('5') ||
-            // Note that Github issues a 403 for both rate limits and improper scopes
-            (error.response?.status === 403 && error.response.headers['x-ratelimit-remaining'] && error.response.headers['x-ratelimit-remaining'] === '0') ||
+            this.isProviderSpecificErrorCode(config.provider.proxy?.retry, error) ||
             error.response?.status === 429 ||
             ['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED'].includes(error.code as string) ||
             config.retryOn?.includes(Number(error.response?.status))
@@ -319,19 +290,31 @@ class ProxyService {
         return false;
     };
 
+    private isProviderSpecificErrorCode(retryConfig: RetryHeaderConfig | undefined, error: AxiosError): boolean {
+        if (!retryConfig) {
+            return false;
+        }
+
+        const { remaining, error_code } = retryConfig;
+
+        if (!remaining || !error_code) {
+            return false;
+        }
+
+        if (Number(error?.response?.status) === Number(error_code) && error.response?.headers[remaining] === '0') {
+            return true;
+        }
+
+        return false;
+    }
+
     /**
      * Send to http method
      * @desc route the call to a HTTP request based on HTTP method passed in
-     * @param {Request} req Express request object
-     * @param {Response} res Express response object
-     * @param {NextFuncion} next callback function to pass control to the next middleware function in the pipeline.
-     * @param {HTTP_VERB} method
      * @param {ApplicationConstructedProxyConfiguration} configBody
      */
     private sendToHttpMethod(configBody: ApplicationConstructedProxyConfiguration): Promise<RouteResponse & Logs> {
-        const options: AxiosRequestConfig = {
-            headers: configBody.headers as Record<string, string | number | boolean>
-        };
+        const options: AxiosRequestConfig = {};
 
         if (configBody.params) {
             options.params = configBody.params as Record<string, string>;
@@ -354,34 +337,9 @@ class ProxyService {
         options.url = this.constructUrl(configBody);
         options.method = method;
 
-        const headers = this.constructHeaders(configBody, method, options.url);
-        options.headers = { ...options.headers, ...headers };
+        options.headers = this.constructHeaders(configBody, method, options.url);
 
         return this.request(configBody, options);
-    }
-
-    public stripSensitiveHeaders(headers: ApplicationConstructedProxyConfiguration['headers'], config: ApplicationConstructedProxyConfiguration) {
-        const safeHeaders = { ...headers };
-
-        if (!config.token) {
-            if (safeHeaders['Authorization']?.includes('Bearer')) {
-                safeHeaders['Authorization'] = safeHeaders['Authorization'].replace(/Bearer.*/, 'Bearer xxxx');
-            }
-
-            return safeHeaders;
-        }
-
-        Object.keys(safeHeaders).forEach((header) => {
-            if (safeHeaders[header] === config.token) {
-                safeHeaders[header] = 'xxxx';
-            }
-            const headerValue = safeHeaders[header];
-            if (headerValue?.includes(config.token as string)) {
-                safeHeaders[header] = headerValue.replace(config.token as string, 'xxxx');
-            }
-        });
-
-        return safeHeaders;
     }
 
     private async request(config: ApplicationConstructedProxyConfiguration, options: AxiosRequestConfig): Promise<RouteResponse & Logs> {
@@ -394,10 +352,10 @@ class ProxyService {
                 { numOfAttempts: Number(config.retries), retry: this.retry.bind(this, config, logs) }
             );
 
-            const handling = this.handleResponse(response, config, options.url!);
+            const handling = this.handleResponse({ response, config, requestConfig: options });
             return { response, logs: [...logs, ...handling.logs] };
         } catch (err) {
-            const handling = this.handleErrorResponse(err, options.url!, config);
+            const handling = this.handleErrorResponse({ error: err, requestConfig: options, config });
             return { response: err as any, logs: [...logs, ...handling.logs] };
         }
     }
@@ -446,9 +404,8 @@ class ProxyService {
 
     /**
      * Construct Headers
-     * @param {ApplicationConstructedProxyConfiguration} config
      */
-    public constructHeaders(config: ApplicationConstructedProxyConfiguration, method: HTTP_VERB, url: string): Record<string, string> {
+    public constructHeaders(config: ApplicationConstructedProxyConfiguration, method: HTTP_METHOD, url: string): Record<string, string> {
         let headers = {};
 
         switch (config.provider.auth_mode) {
@@ -473,7 +430,7 @@ class ProxyService {
                 break;
             default:
                 headers = {
-                    Authorization: `Bearer ${config.token}`
+                    Authorization: `Bearer ${config.token as string}`
                 };
                 break;
         }
@@ -481,13 +438,14 @@ class ProxyService {
         // even if the auth mode isn't api key a header might exist in the proxy
         // so inject it if so
         if ('proxy' in config.provider && 'headers' in config.provider.proxy) {
-            headers = Object.entries(config.provider.proxy.headers).reduce(
-                (acc: Record<string, string>, [key, value]: [string, string]) => {
-                    // allows oauth2 acessToken key to be interpolated and injected
+            headers = Object.entries(config.provider.proxy.headers).reduce<Record<string, string>>(
+                (acc, [key, value]) => {
+                    // allows oauth2 accessToken key to be interpolated and injected
                     // into the header in addition to api key values
                     let tokenPair;
                     switch (config.provider.auth_mode) {
                         case 'OAUTH2':
+                        case 'SIGNATURE':
                             if (value.includes('connectionConfig')) {
                                 value = value.replace(/connectionConfig\./g, '');
                                 tokenPair = config.connection.connection_config;
@@ -499,6 +457,7 @@ class ProxyService {
                         case 'API_KEY':
                         case 'OAUTH2_CC':
                         case 'TABLEAU':
+                        case 'TWO_STEP':
                         case 'JWT':
                             if (value.includes('connectionConfig')) {
                                 value = value.replace(/connectionConfig\./g, '');
@@ -511,6 +470,7 @@ class ProxyService {
                             tokenPair = config.token;
                             break;
                     }
+
                     acc[key] = interpolateIfNeeded(value, tokenPair as unknown as Record<string, string>);
                     return acc;
                 },
@@ -555,55 +515,75 @@ class ProxyService {
         }
 
         if (config.headers) {
-            const { headers: configHeaders } = config;
-            headers = { ...headers, ...configHeaders };
+            // Headers set in scripts should override the default ones
+            headers = { ...headers, ...config.headers };
         }
 
         return headers;
     }
 
-    private handleResponse(response: AxiosResponse, config: ApplicationConstructedProxyConfiguration, url: string): Logs {
-        const safeHeaders = this.stripSensitiveHeaders(config.headers, config);
-
+    private handleResponse({
+        response,
+        config,
+        requestConfig
+    }: {
+        response: AxiosResponse;
+        config: ApplicationConstructedProxyConfiguration;
+        requestConfig: AxiosRequestConfig;
+    }): Logs {
+        const valuesToFilter = Object.values(config.connection.credentials);
+        const safeHeaders = redactHeaders({ headers: requestConfig.headers, valuesToFilter });
+        const redactedURL = redactURL({ url: requestConfig.url!, valuesToFilter });
         return {
             logs: [
                 {
                     type: 'http',
                     level: 'info',
                     createdAt: new Date().toISOString(),
-                    message: `${config.method.toUpperCase()} ${url} was successful`,
+                    message: `${config.method} ${redactedURL} was successful`,
                     request: {
                         method: config.method,
-                        url,
+                        url: redactedURL,
                         headers: safeHeaders
                     },
                     response: {
                         code: response.status,
-                        headers: response.headers as Record<string, string>
+                        headers: (response.headers || {}) as Record<string, string>
                     }
                 }
             ]
         };
     }
 
-    private handleErrorResponse(error: unknown, url: string, config: ApplicationConstructedProxyConfiguration): Logs {
+    private handleErrorResponse({
+        error,
+        requestConfig,
+        config
+    }: {
+        error: unknown;
+        requestConfig: AxiosRequestConfig;
+        config: ApplicationConstructedProxyConfiguration;
+    }): Logs {
         const logs: MessageRowInsert[] = [];
 
+        const valuesToFilter = Object.values(config.connection.credentials);
+        const redactedURL = redactURL({ url: requestConfig.url!, valuesToFilter });
+
         if (isAxiosError(error)) {
-            const safeHeaders = this.stripSensitiveHeaders(config.headers, config);
+            const safeHeaders = redactHeaders({ headers: requestConfig.headers, valuesToFilter });
             logs.push({
                 type: 'http',
                 level: 'error',
                 createdAt: new Date().toISOString(),
-                message: `${config.method.toUpperCase()} request to ${url} failed`,
+                message: `${config.method} request to ${redactedURL} failed`,
                 request: {
                     method: config.method,
-                    url,
+                    url: redactedURL,
                     headers: safeHeaders
                 },
                 response: {
                     code: error.response?.status || 500,
-                    headers: error.response?.headers as Record<string, string>
+                    headers: (error.response?.headers || {}) as Record<string, string>
                 },
                 error: {
                     name: error.name,
@@ -613,7 +593,7 @@ class ProxyService {
                         stack: error.stack,
                         code: error.code,
                         status: error.status,
-                        url,
+                        url: redactedURL,
                         data: error.response?.data,
                         safeHeaders
                     }
@@ -624,7 +604,7 @@ class ProxyService {
                 type: 'http',
                 level: 'error',
                 createdAt: new Date().toISOString(),
-                message: `${config.method.toUpperCase()} request to ${url} failed`,
+                message: `${config.method} request to ${redactedURL} failed`,
                 error: error as any
             });
         }

@@ -3,7 +3,7 @@ import { CopyButton } from '../../../../../components/ui/button/CopyButton';
 import { defaultCallback } from '../../../../../utils/utils';
 import type { EnvironmentAndAccount } from '@nangohq/server';
 import SecretInput from '../../../../../components/ui/input/SecretInput';
-import Button from '../../../../../components/ui/button/Button';
+import { Button } from '../../../../../components/ui/button/Button';
 import { InfoBloc } from '../../../../../components/InfoBloc';
 import { Input } from '../../../../../components/ui/input/Input';
 import { useState } from 'react';
@@ -21,7 +21,7 @@ export const SettingsCustom: React.FC<{ data: GetIntegration['Success']['data'];
     const { toast } = useToast();
     const env = useStore((state) => state.env);
     const [loading, setLoading] = useState(false);
-    const [appId, setAppId] = useState(integration.oauth_client_id || '');
+    const [appId, setAppId] = useState(integration.custom?.app_id || '');
     const [appLink, setAppLink] = useState(integration.app_link || '');
     const [privateKey, setPrivateKey] = useState(integration.custom?.private_key || '');
     const [clientId, setClientId] = useState(integration.oauth_client_id || '');
@@ -63,7 +63,7 @@ export const SettingsCustom: React.FC<{ data: GetIntegration['Success']['data'];
                             required
                             minLength={1}
                             variant={'flat'}
-                            after={<CopyButton text={integration.oauth_client_id} />}
+                            after={<CopyButton text={integration.oauth_client_id || ''} />}
                         />
                     </InfoBloc>
                     <InfoBloc title="App Public Link">
@@ -94,7 +94,7 @@ export const SettingsCustom: React.FC<{ data: GetIntegration['Success']['data'];
                         required
                         minLength={1}
                         variant={'flat'}
-                        after={<CopyButton text={integration.oauth_client_id} />}
+                        after={<CopyButton text={integration.oauth_client_id || ''} />}
                     />
                 </InfoBloc>
 

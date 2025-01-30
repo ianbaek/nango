@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import db, { schema, dbNamespace } from '@nangohq/database';
-import type { Sync, SyncConfig, Job as SyncJob } from '../../models/Sync.js';
+import type { Sync, SyncWithConnectionId, SyncConfig, Job as SyncJob } from '../../models/Sync.js';
 import { SyncStatus } from '../../models/Sync.js';
 import type { Connection, NangoConnection } from '../../models/Connection.js';
 import type { ActiveLog, IncomingFlowConfig, SlimAction, SlimSync, SyncAndActionDifferences, SyncTypeLiteral } from '@nangohq/types';
@@ -12,7 +12,6 @@ import {
 import type { CreateSyncArgs } from './manager.service.js';
 import syncManager from './manager.service.js';
 import connectionService from '../connection.service.js';
-import { DEMO_GITHUB_CONFIG_KEY, DEMO_SYNC_NAME } from '../onboarding.service.js';
 import type { LogContext, LogContextGetter } from '@nangohq/logs';
 import type { Orchestrator } from '../../clients/orchestrator.js';
 import { stringifyError } from '@nangohq/utils';
@@ -161,7 +160,7 @@ export const getSyncByIdAndName = async (nangoConnectionId: number, name: string
 export const getSyncs = async (
     nangoConnection: Connection,
     orchestrator: Orchestrator
-): Promise<(Sync & { sync_type: SyncTypeLiteral; status: SyncStatus; active_logs: Pick<ActiveLog, 'log_id'> })[]> => {
+): Promise<(Sync & { sync_type: SyncTypeLiteral; status: SyncStatus; active_logs: Pick<ActiveLog, 'log_id'>; models: string[] })[]> => {
     const q = db.knex
         .from<Sync>(TABLE)
         .select(
@@ -198,7 +197,8 @@ export const getSyncs = async (
             this.on(`${SYNC_CONFIG_TABLE}.sync_name`, `${TABLE}.name`)
                 .andOn(`${SYNC_CONFIG_TABLE}.deleted`, '=', db.knex.raw('FALSE'))
                 .andOn(`${SYNC_CONFIG_TABLE}.active`, '=', db.knex.raw('TRUE'))
-                .andOn(`${SYNC_CONFIG_TABLE}.type`, '=', db.knex.raw('?', 'sync'));
+                .andOn(`${SYNC_CONFIG_TABLE}.type`, '=', db.knex.raw('?', 'sync'))
+                .andOn(`${SYNC_CONFIG_TABLE}.enabled`, '=', db.knex.raw('?', 'TRUE'));
         })
         .where({
             nango_connection_id: nangoConnection.id,
@@ -242,8 +242,6 @@ export const getSyncsByConnectionId = async (nangoConnectionId: number): Promise
     return null;
 };
 
-type SyncWithConnectionId = Sync & { connection_id: string };
-
 export const getSyncsByProviderConfigKey = async (environment_id: number, providerConfigKey: string): Promise<SyncWithConnectionId[]> => {
     const results = await db.knex
         .select(`${TABLE}.*`, `${TABLE}.name`, `_nango_connections.connection_id`, `${TABLE}.created_at`, `${TABLE}.updated_at`, `${TABLE}.last_sync_date`)
@@ -285,9 +283,13 @@ export const getSyncNamesByConnectionId = async (nangoConnectionId: number): Pro
     return [];
 };
 
-export const getSyncsByProviderConfigAndSyncNames = async (environment_id: number, providerConfigKey: string, syncNames: string[]): Promise<Sync[]> => {
+export const getSyncsByProviderConfigAndSyncNames = async (
+    environment_id: number,
+    providerConfigKey: string,
+    syncNames: string[]
+): Promise<SyncWithConnectionId[]> => {
     const results = await db.knex
-        .select(`${TABLE}.*`)
+        .select(`${TABLE}.*`, '_nango_connections.connection_id')
         .from<Sync>(TABLE)
         .join('_nango_connections', '_nango_connections.id', `${TABLE}.nango_connection_id`)
         .where({
@@ -575,69 +577,6 @@ export const getAndReconcileDifferences = async ({
         deletedModels
     };
 };
-
-export interface PausableSyncs {
-    id: string;
-    name: string;
-    config_id: number;
-    provider_unique_key: string;
-    provider: string;
-    environment_id: number;
-    environment_name: string;
-    account_id: number;
-    account_name: string;
-    sync_config_id: number;
-    connection_unique_id: number;
-    connection_id: string;
-    unique_key: string;
-    schedule_id: string;
-}
-export async function findDemoSyncs(): Promise<PausableSyncs[]> {
-    const q = db.knex
-        .queryBuilder()
-        .from('_nango_syncs')
-        .select(
-            '_nango_syncs.id',
-            '_nango_syncs.name',
-            '_nango_accounts.id as account_id',
-            '_nango_accounts.name as account_name',
-            '_nango_environments.id as environment_id',
-            '_nango_environments.name as environment_name',
-            '_nango_configs.id as config_id',
-            '_nango_configs.provider',
-            '_nango_configs.unique_key as provider_unique_key',
-            '_nango_connections.id as connection_unique_id',
-            '_nango_connections.connection_id',
-            '_nango_sync_configs.id as sync_config_id'
-        )
-        .join('_nango_connections', '_nango_connections.id', '_nango_syncs.nango_connection_id')
-        .join('_nango_environments', '_nango_environments.id', '_nango_connections.environment_id')
-        .join('_nango_accounts', '_nango_accounts.id', '_nango_environments.account_id')
-        .join('_nango_configs', function () {
-            this.on('_nango_configs.environment_id', '_nango_connections.environment_id').on(
-                '_nango_configs.unique_key',
-                '_nango_connections.provider_config_key'
-            );
-        })
-        .join('_nango_sync_configs', function () {
-            this.on('_nango_sync_configs.id', '_nango_syncs.sync_config_id')
-                .onVal('_nango_sync_configs.type', 'sync')
-                .onVal('_nango_sync_configs.deleted', false)
-                .onVal('_nango_sync_configs.active', true);
-        })
-        .where({
-            '_nango_syncs.name': DEMO_SYNC_NAME,
-            '_nango_environments.name': 'dev',
-            '_nango_configs.unique_key': DEMO_GITHUB_CONFIG_KEY,
-            '_nango_configs.provider': 'github',
-            '_nango_syncs.deleted': false
-        })
-        .where(db.knex.raw("_nango_syncs.updated_at >  NOW() - INTERVAL '30d'")) // making sure number of syncs returned doesn't grow too large over time. We are assuming the pausing is running at least once during this period
-        .where(db.knex.raw("_nango_syncs.updated_at <  NOW() - INTERVAL '25h'")); // only pausing demo syncs that are older than 25h
-    const syncs: PausableSyncs[] = await q;
-
-    return syncs;
-}
 
 export async function findRecentlyDeletedSync(): Promise<{ id: string; environmentId: number; connectionId: number; models: string[] }[]> {
     const q = db.knex

@@ -1,8 +1,9 @@
 import jwt from 'jsonwebtoken';
+import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import type { Knex } from '@nangohq/database';
-import db, { schema, dbNamespace } from '@nangohq/database';
+import db, { dbNamespace } from '@nangohq/database';
 import analytics, { AnalyticsTypes } from '../utils/analytics.js';
-import type { Config as ProviderConfig, AuthCredentials, OAuth1Credentials } from '../models/index.js';
+import type { Config as ProviderConfig, AuthCredentials, OAuth1Credentials, Config } from '../models/index.js';
 import { LogActionEnum } from '../models/Telemetry.js';
 import providerClient from '../clients/provider.client.js';
 import configService from './config.service.js';
@@ -25,7 +26,14 @@ import type {
     DBEnvironment,
     JwtCredentials,
     BillCredentials,
-    IntegrationConfig
+    IntegrationConfig,
+    DBConnection,
+    DBEndUser,
+    TwoStepCredentials,
+    ProviderTwoStep,
+    ProviderSignature,
+    SignatureCredentials,
+    MessageRowInsert
 } from '@nangohq/types';
 import { getLogger, stringifyError, Ok, Err, axiosInstance as axios } from '@nangohq/utils';
 import type { Result } from '@nangohq/utils';
@@ -41,7 +49,17 @@ import type {
     BasicApiCredentials,
     ConnectionUpsertResponse
 } from '../models/Auth.js';
-import { interpolateStringFromObject, interpolateString, parseTokenExpirationDate, isTokenExpired, parseTableauTokenExpirationDate } from '../utils/utils.js';
+import {
+    interpolateStringFromObject,
+    interpolateString,
+    parseTokenExpirationDate,
+    isTokenExpired,
+    parseTableauTokenExpirationDate,
+    interpolateObject,
+    extractValueByPath,
+    stripCredential,
+    interpolateObjectValues
+} from '../utils/utils.js';
 import type { LogContext, LogContextGetter } from '@nangohq/logs';
 import { CONNECTIONS_WITH_SCRIPTS_CAP_LIMIT } from '../constants.js';
 import type { Orchestrator } from '../clients/orchestrator.js';
@@ -50,6 +68,7 @@ import { getProvider } from './providers.js';
 import { v4 as uuidv4 } from 'uuid';
 import { locking } from '../clients/locking.js';
 import type { Lock, Locking } from '../utils/lock/locking.js';
+import { generateWsseSignature } from '../signatures/wsse.signature.js';
 
 const logger = getLogger('Connection');
 const ACTIVE_LOG_TABLE = dbNamespace + 'active_logs';
@@ -135,7 +154,7 @@ class ConnectionService {
         return [{ connection: connection[0]!, operation: 'creation' }];
     }
 
-    public async upsertTbaConnection({
+    public async upsertAuthConnection({
         connectionId,
         providerConfigKey,
         credentials,
@@ -147,131 +166,15 @@ class ConnectionService {
     }: {
         connectionId: string;
         providerConfigKey: string;
-        credentials: TbaCredentials;
-        connectionConfig?: ConnectionConfig;
-        config: ProviderConfig;
-        metadata?: Metadata | null;
-        environment: DBEnvironment;
-        account: DBTeam;
-    }): Promise<ConnectionUpsertResponse[]> {
-        const storedConnection = await this.checkIfConnectionExists(connectionId, providerConfigKey, environment.id);
-
-        if (storedConnection) {
-            const encryptedConnection = encryptionManager.encryptConnection({
-                connection_id: connectionId,
-                config_id: config.id as number,
-                provider_config_key: providerConfigKey,
-                credentials,
-                connection_config: connectionConfig || storedConnection.connection_config,
-                environment_id: environment.id,
-                metadata: metadata || storedConnection.metadata || null
-            });
-            (encryptedConnection as Connection).updated_at = new Date();
-            const connection = await db.knex
-                .from<StoredConnection>(`_nango_connections`)
-                .where({ id: storedConnection.id!, deleted: false })
-                .update(encryptedConnection)
-                .returning('*');
-
-            void analytics.track(AnalyticsTypes.TBA_CONNECTION_INSERTED, account.id, { provider: config.provider });
-
-            return [{ connection: connection[0]!, operation: 'override' }];
-        }
-        const connection = await db.knex
-            .from<StoredConnection>(`_nango_connections`)
-            .insert(
-                encryptionManager.encryptConnection({
-                    connection_id: connectionId,
-                    provider_config_key: providerConfigKey,
-                    config_id: config.id as number,
-                    credentials,
-                    metadata: metadata || null,
-                    connection_config: connectionConfig || {},
-                    environment_id: environment.id
-                })
-            )
-            .returning('*');
-
-        void analytics.track(AnalyticsTypes.TBA_CONNECTION_INSERTED, account.id, { provider: config.provider });
-
-        return [{ connection: connection[0]!, operation: 'creation' }];
-    }
-
-    public async upsertTableauConnection({
-        connectionId,
-        providerConfigKey,
-        credentials,
-        connectionConfig,
-        metadata,
-        config,
-        environment,
-        account
-    }: {
-        connectionId: string;
-        providerConfigKey: string;
-        credentials: TableauCredentials;
-        connectionConfig?: ConnectionConfig;
-        config: ProviderConfig;
-        metadata?: Metadata | null;
-        environment: DBEnvironment;
-        account: DBTeam;
-    }): Promise<ConnectionUpsertResponse[]> {
-        const storedConnection = await this.checkIfConnectionExists(connectionId, providerConfigKey, environment.id);
-
-        if (storedConnection) {
-            const encryptedConnection = encryptionManager.encryptConnection({
-                connection_id: connectionId,
-                config_id: config.id as number,
-                provider_config_key: providerConfigKey,
-                credentials,
-                connection_config: connectionConfig || storedConnection.connection_config,
-                environment_id: environment.id,
-                metadata: metadata || storedConnection.metadata || null
-            });
-            (encryptedConnection as Connection).updated_at = new Date();
-            const connection = await db.knex
-                .from<StoredConnection>(`_nango_connections`)
-                .where({ id: storedConnection.id!, deleted: false })
-                .update(encryptedConnection)
-                .returning('*');
-
-            void analytics.track(AnalyticsTypes.TABLEAU_CONNECTION_INSERTED, account.id, { provider: config.provider });
-
-            return [{ connection: connection[0]!, operation: 'override' }];
-        }
-        const connection = await db.knex
-            .from<StoredConnection>(`_nango_connections`)
-            .insert(
-                encryptionManager.encryptConnection({
-                    connection_id: connectionId,
-                    provider_config_key: providerConfigKey,
-                    config_id: config.id as number,
-                    credentials,
-                    metadata: metadata || null,
-                    connection_config: connectionConfig || {},
-                    environment_id: environment.id
-                })
-            )
-            .returning('*');
-
-        void analytics.track(AnalyticsTypes.TABLEAU_CONNECTION_INSERTED, account.id, { provider: config.provider });
-
-        return [{ connection: connection[0]!, operation: 'creation' }];
-    }
-
-    public async upsertJwtConnection({
-        connectionId,
-        providerConfigKey,
-        credentials,
-        connectionConfig,
-        metadata,
-        config,
-        environment,
-        account
-    }: {
-        connectionId: string;
-        providerConfigKey: string;
-        credentials: JwtCredentials;
+        credentials:
+            | TwoStepCredentials
+            | TableauCredentials
+            | TbaCredentials
+            | JwtCredentials
+            | ApiKeyCredentials
+            | BasicApiCredentials
+            | BillCredentials
+            | SignatureCredentials;
         connectionConfig?: ConnectionConfig;
         config: ProviderConfig;
         metadata?: Metadata | null;
@@ -298,116 +201,17 @@ class ConnectionService {
             })
             .returning('*');
 
-        void analytics.track(AnalyticsTypes.JWT_CONNECTION_INSERTED, account.id, { provider: config.provider });
+        const operation = connection ? 'creation' : 'override';
 
-        return [{ connection: connection!, operation: connection ? 'override' : 'creation' }];
-    }
-
-    public async upsertApiConnection({
-        connectionId,
-        providerConfigKey,
-        provider,
-        credentials,
-        connectionConfig,
-        metadata,
-        environment,
-        account
-    }: {
-        connectionId: string;
-        providerConfigKey: string;
-        provider: string;
-        credentials: ApiKeyCredentials | BasicApiCredentials;
-        connectionConfig?: ConnectionConfig;
-        metadata?: Metadata | null;
-        environment: DBEnvironment;
-        account: DBTeam;
-    }): Promise<ConnectionUpsertResponse[]> {
-        const storedConnection = await this.checkIfConnectionExists(connectionId, providerConfigKey, environment.id);
-        const config_id = await configService.getIdByProviderConfigKey(environment.id, providerConfigKey); // TODO remove that
-
-        if (storedConnection) {
-            const encryptedConnection = encryptionManager.encryptConnection({
-                connection_id: connectionId,
-                config_id: config_id as number,
-                provider_config_key: providerConfigKey,
-                credentials,
-                connection_config: connectionConfig || storedConnection.connection_config,
-                environment_id: environment.id,
-                metadata: metadata || storedConnection.metadata || null
+        if (credentials.type) {
+            await analytics.trackConnectionEvent({
+                provider_type: credentials.type,
+                operation,
+                accountId: account.id
             });
-            (encryptedConnection as Connection).updated_at = new Date();
-            const connection = await db.knex
-                .from<StoredConnection>(`_nango_connections`)
-                .where({ id: storedConnection.id!, deleted: false })
-                .update(encryptedConnection)
-                .returning('*');
-
-            void analytics.track(AnalyticsTypes.API_CONNECTION_UPDATED, account.id, { provider });
-
-            return [{ connection: connection[0]!, operation: 'override' }];
         }
-        const connection = await db.knex
-            .from<StoredConnection>(`_nango_connections`)
-            .insert(
-                encryptionManager.encryptApiConnection({
-                    connection_id: connectionId,
-                    provider_config_key: providerConfigKey,
-                    config_id: config_id as number,
-                    credentials,
-                    metadata: metadata || {},
-                    connection_config: connectionConfig || {},
-                    environment_id: environment.id
-                })
-            )
-            .returning('*');
 
-        void analytics.track(AnalyticsTypes.API_CONNECTION_INSERTED, account.id, { provider });
-
-        return [{ connection: connection[0]!, operation: 'creation' }];
-    }
-
-    public async upsertBillConnection({
-        connectionId,
-        providerConfigKey,
-        credentials,
-        connectionConfig,
-        metadata,
-        config,
-        environment,
-        account
-    }: {
-        connectionId: string;
-        providerConfigKey: string;
-        credentials: BillCredentials;
-        connectionConfig?: ConnectionConfig;
-        config: ProviderConfig;
-        metadata?: Metadata | null;
-        environment: DBEnvironment;
-        account: DBTeam;
-    }): Promise<ConnectionUpsertResponse[]> {
-        const encryptedConnection = encryptionManager.encryptConnection({
-            connection_id: connectionId,
-            provider_config_key: providerConfigKey,
-            config_id: config.id as number,
-            credentials,
-            connection_config: connectionConfig || {},
-            environment_id: environment.id,
-            metadata: metadata || null
-        });
-
-        const [connection] = await db.knex
-            .from<StoredConnection>(`_nango_connections`)
-            .insert(encryptedConnection)
-            .onConflict(['connection_id', 'provider_config_key', 'environment_id', 'deleted_at'])
-            .merge({
-                ...encryptedConnection,
-                updated_at: new Date()
-            })
-            .returning('*');
-
-        void analytics.track(AnalyticsTypes.BILL_CONNECTION_INSERTED, account.id, { provider: config.provider });
-
-        return [{ connection: connection!, operation: connection ? 'override' : 'creation' }];
+        return [{ connection: connection!, operation }];
     }
 
     public async upsertUnauthConnection({
@@ -508,7 +312,6 @@ class ConnectionService {
     public async importApiAuthConnection({
         connectionId,
         providerConfigKey,
-        provider,
         metadata = null,
         environment,
         account,
@@ -526,13 +329,20 @@ class ConnectionService {
         credentials: BasicApiCredentials | ApiKeyCredentials;
         connectionCreatedHook: (res: ConnectionUpsertResponse) => MaybePromise<void>;
     }) {
-        const [importedConnection] = await this.upsertApiConnection({
+        const config = await configService.getProviderConfig(providerConfigKey, environment.id);
+
+        if (!config) {
+            logger.error('Unknown provider');
+            return [];
+        }
+
+        const [importedConnection] = await this.upsertAuthConnection({
             connectionId,
             providerConfigKey,
-            provider,
             credentials,
             connectionConfig,
             metadata,
+            config,
             environment,
             account
         });
@@ -547,9 +357,9 @@ class ConnectionService {
     public async getConnectionById(
         id: number
     ): Promise<Pick<Connection, 'id' | 'connection_id' | 'provider_config_key' | 'environment_id' | 'connection_config' | 'metadata'> | null> {
-        const result = await schema()
-            .select('id', 'connection_id', 'provider_config_key', 'environment_id', 'connection_config', 'metadata')
+        const result = await db.knex
             .from<StoredConnection>('_nango_connections')
+            .select('id', 'connection_id', 'provider_config_key', 'environment_id', 'connection_config', 'metadata')
             .where({ id: id, deleted: false });
 
         if (!result || result.length == 0 || !result[0]) {
@@ -575,27 +385,15 @@ class ConnectionService {
     }
 
     public async getConnection(connectionId: string, providerConfigKey: string, environment_id: number): Promise<ServiceResponse<Connection>> {
-        if (!environment_id) {
-            const error = new NangoError('missing_environment');
+        const rawConnection = await db.knex
+            .from(`_nango_connections`)
+            .select<StoredConnection[]>('*')
+            .where({ connection_id: connectionId, provider_config_key: providerConfigKey, environment_id, deleted: false })
+            .limit(1)
+            .first();
 
-            return { success: false, error, response: null };
-        }
-
-        if (!connectionId) {
-            const error = new NangoError('missing_connection');
-
-            await telemetry.log(LogTypes.GET_CONNECTION_FAILURE, error.message, LogActionEnum.AUTH, {
-                environmentId: String(environment_id),
-                connectionId,
-                providerConfigKey,
-                level: 'error'
-            });
-
-            return { success: false, error, response: null };
-        }
-
-        if (!providerConfigKey) {
-            const error = new NangoError('missing_provider_config');
+        if (!rawConnection) {
+            const error = new NangoError('unknown_connection', { connectionId, providerConfigKey });
 
             await telemetry.log(LogTypes.GET_CONNECTION_FAILURE, error.message, LogActionEnum.AUTH, {
                 environmentId: String(environment_id),
@@ -607,78 +405,42 @@ class ConnectionService {
             return { success: false, error, response: null };
         }
 
-        const result: StoredConnection[] | null = (await schema()
-            .select('*')
-            .from<StoredConnection>(`_nango_connections`)
-            .where({ connection_id: connectionId, provider_config_key: providerConfigKey, environment_id, deleted: false })) as unknown as StoredConnection[];
-
-        const storedConnection = result == null || result.length == 0 ? null : result[0] || null;
-
-        if (!storedConnection) {
-            const environmentName = await environmentService.getEnvironmentName(environment_id);
-
-            const error = new NangoError('unknown_connection', { connectionId, providerConfigKey, environmentName });
-
-            await telemetry.log(LogTypes.GET_CONNECTION_FAILURE, error.message, LogActionEnum.AUTH, {
-                environmentId: String(environment_id),
-                connectionId,
-                providerConfigKey,
-                level: 'error'
-            });
-
-            return { success: false, error, response: null };
-        }
-
-        const connection = encryptionManager.decryptConnection(storedConnection);
+        const connection = encryptionManager.decryptConnection(rawConnection)!;
 
         // Parse the token expiration date.
-        if (connection != null) {
-            const credentials = connection.credentials as
-                | OAuth1Credentials
-                | OAuth2Credentials
-                | AppCredentials
-                | OAuth2ClientCredentials
-                | TableauCredentials
-                | JwtCredentials
-                | BillCredentials;
-            if (credentials.type && credentials.type === 'OAUTH2') {
-                const creds = credentials;
-                creds.expires_at = creds.expires_at != null ? parseTokenExpirationDate(creds.expires_at) : undefined;
-                connection.credentials = creds;
-            }
-
-            if (credentials.type && credentials.type === 'APP') {
-                const creds = credentials;
-                creds.expires_at = creds.expires_at != null ? parseTokenExpirationDate(creds.expires_at) : undefined;
-                connection.credentials = creds;
-            }
-
-            if (credentials.type && credentials.type === 'OAUTH2_CC') {
-                const creds = credentials;
-                creds.expires_at = creds.expires_at != null ? parseTokenExpirationDate(creds.expires_at) : undefined;
-                connection.credentials = creds;
-            }
-
-            if (credentials.type && credentials.type === 'TABLEAU') {
-                const creds = credentials;
-                creds.expires_at = creds.expires_at != null ? parseTokenExpirationDate(creds.expires_at) : undefined;
-                connection.credentials = creds;
-            }
-
-            if (credentials.type && credentials.type === 'JWT') {
-                const creds = credentials;
-                creds.expires_at = creds.expires_at != null ? parseTokenExpirationDate(creds.expires_at) : undefined;
-                connection.credentials = creds;
-            }
-
-            if (credentials.type && credentials.type === 'BILL') {
-                const creds = credentials;
-                creds.expires_at = creds.expires_at != null ? parseTokenExpirationDate(creds.expires_at) : undefined;
-                connection.credentials = creds;
-            }
+        const credentials = connection.credentials;
+        if (credentials.type && 'expires_at' in credentials) {
+            const creds = credentials;
+            creds.expires_at = creds.expires_at != null ? parseTokenExpirationDate(creds.expires_at) : undefined;
+            connection.credentials = creds;
         }
 
         return { success: true, error: null, response: connection };
+    }
+
+    public async getConnectionForPrivateApi({
+        connectionId,
+        providerConfigKey,
+        environmentId
+    }: {
+        connectionId: string;
+        providerConfigKey: string;
+        environmentId: number;
+    }): Promise<Result<{ connection: Connection; end_user: DBEndUser }>> {
+        const result = await db.knex
+            .select<{
+                connection: DBConnection;
+                end_user: DBEndUser;
+            }>(db.knex.raw('row_to_json(_nango_connections.*) as connection'), db.knex.raw('row_to_json(end_users.*) as end_user'))
+            .from(`_nango_connections`)
+            .leftJoin('end_users', 'end_users.id', '_nango_connections.end_user_id')
+            .where({ connection_id: connectionId, provider_config_key: providerConfigKey, '_nango_connections.environment_id': environmentId, deleted: false })
+            .first();
+        if (!result) {
+            return Err('failed_to_fetch_connection');
+        }
+
+        return Ok({ connection: encryptionManager.decryptConnection(result.connection)!, end_user: result.end_user });
     }
 
     public async updateConnection(connection: Connection) {
@@ -849,6 +611,36 @@ class ConnectionService {
         return result.map((connection) => encryptionManager.decryptConnection(connection) as Connection);
     }
 
+    public async findConnectionsByMetadataValue({
+        metadataProperty,
+        payloadIdentifier,
+        configId,
+        environmentId
+    }: {
+        metadataProperty: string;
+        payloadIdentifier: string;
+        configId: number | undefined;
+        environmentId: number;
+    }): Promise<Connection[] | null> {
+        if (!configId) {
+            return null;
+        }
+
+        const result = await db.knex
+            .from<StoredConnection>(`_nango_connections`)
+            .select('*')
+            .where({ environment_id: environmentId, config_id: configId })
+            // escape the question mark so it doesn't try to bind it as a parameter
+            .where(db.knex.raw(`metadata->? \\? ?`, [metadataProperty, payloadIdentifier]))
+            .andWhere('deleted', false);
+
+        if (!result || result.length == 0) {
+            return null;
+        }
+
+        return result.map((connection) => encryptionManager.decryptConnection(connection) as Connection);
+    }
+
     public async findConnectionsByMultipleConnectionConfigValues(keyValuePairs: KeyValuePairs, environmentId: number): Promise<Connection[] | null> {
         let query = db.knex.from<StoredConnection>(`_nango_connections`).select('*').where({ environment_id: environmentId });
 
@@ -865,55 +657,126 @@ class ConnectionService {
         return result.map((connection) => encryptionManager.decryptConnection(connection) as Connection);
     }
 
-    public async listConnections(
-        environment_id: number,
-        connectionId?: string
-    ): Promise<
-        { id: number; connection_id: string; provider: string; created: string; metadata: Metadata; active_logs: [{ type: string; log_id: string }] }[]
-    > {
-        const queryBuilder = db.knex
-            .from<Connection>(`_nango_connections`)
-            .select(
-                { id: '_nango_connections.id' },
-                { connection_id: '_nango_connections.connection_id' },
-                { provider: '_nango_connections.provider_config_key' },
-                { created: '_nango_connections.created_at' },
-                '_nango_connections.metadata',
-                db.knex.raw(`
-                  (SELECT COALESCE(json_agg(json_build_object(
-                      'type', type,
-                      'log_id', log_id
-                    )), '[]'::json)
-                    FROM ${ACTIVE_LOG_TABLE}
-                    WHERE _nango_connections.id = ${ACTIVE_LOG_TABLE}.connection_id
-                      AND ${ACTIVE_LOG_TABLE}.active = true
-                  ) as active_logs
-               `)
+    public async count({
+        environmentId
+    }: {
+        environmentId: number;
+    }): Promise<Result<{ total: number; withAuthError: number; withSyncError: number; withError: number }>> {
+        const query = db.knex
+            .from(`_nango_connections`)
+            .select<{ total_connection: string; with_auth_error: string; with_sync_error: string; with_error: string }>(
+                db.knex.raw('COUNT(DISTINCT _nango_connections.id) as total_connection'),
+                db.knex.raw("COUNT(DISTINCT _nango_connections.id) FILTER (WHERE _nango_active_logs.type = 'auth') as with_auth_error"),
+                db.knex.raw("COUNT(DISTINCT _nango_connections.id) FILTER (WHERE _nango_active_logs.type = 'sync') as with_sync_error"),
+                db.knex.raw('COUNT(DISTINCT _nango_connections.id) FILTER (WHERE _nango_active_logs.type IS NOT NULL) as with_error')
             )
-            .where({
-                environment_id: environment_id,
-                deleted: false
+            .leftJoin('_nango_active_logs', (join) => {
+                join.on('_nango_active_logs.connection_id', '_nango_connections.id').andOnVal('active', true);
             })
-            .groupBy(
-                '_nango_connections.id',
-                '_nango_connections.connection_id',
-                '_nango_connections.provider_config_key',
-                '_nango_connections.created_at',
-                '_nango_connections.metadata'
-            );
+            .where({
+                '_nango_connections.environment_id': environmentId,
+                '_nango_connections.deleted': false
+            })
+            .first();
 
-        if (connectionId) {
-            queryBuilder.where({
-                connection_id: connectionId
-            });
+        const res = await query;
+        if (!res) {
+            return Err('failed_to_count');
         }
 
-        return queryBuilder;
+        return Ok({
+            total: Number(res.total_connection),
+            withAuthError: Number(res.with_auth_error),
+            withSyncError: Number(res.with_sync_error),
+            withError: Number(res.with_error)
+        });
     }
 
-    public async getAllNames(environment_id: number): Promise<string[]> {
-        const connections = await this.listConnections(environment_id);
-        return [...new Set(connections.map((config) => config.connection_id))];
+    /**
+     * List connections with associated data (active_logs, end_users) and pagination
+     * If you want the raw list, use something else
+     */
+    public async listConnections({
+        environmentId,
+        connectionId,
+        integrationIds,
+        withError,
+        search,
+        endUserId,
+        endUserOrganizationId,
+        limit = 1000,
+        page = 0
+    }: {
+        environmentId: number;
+        connectionId?: string | undefined;
+        integrationIds?: string[] | undefined;
+        withError?: boolean | undefined;
+        search?: string | undefined;
+        endUserId?: string | undefined;
+        endUserOrganizationId?: string | undefined;
+        limit?: number;
+        page?: number | undefined;
+    }): Promise<{ connection: DBConnection; end_user: DBEndUser | null; active_logs: [{ type: string; log_id: string }]; provider: string }[]> {
+        const query = db.knex
+            .from<Connection>(`_nango_connections`)
+            .select<{ connection: DBConnection; end_user: DBEndUser | null; active_logs: [{ type: string; log_id: string }]; provider: string }[]>(
+                db.knex.raw('row_to_json(_nango_connections.*) as connection'),
+                db.knex.raw('row_to_json(end_users.*) as end_user'),
+                db.knex.raw(`
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                                'type', _nango_active_logs.type,
+                                'log_id', _nango_active_logs.log_id
+                            )
+                        ) FILTER (WHERE _nango_active_logs.id IS NOT NULL)
+                        , '[]'::json
+                    ) as active_logs
+               `),
+                db.knex.raw('count(_nango_active_logs.id) as active_logs_count'),
+                '_nango_configs.provider'
+            )
+            .join('_nango_configs', '_nango_connections.config_id', '_nango_configs.id')
+            .leftJoin('end_users', 'end_users.id', '_nango_connections.end_user_id')
+            .leftJoin(ACTIVE_LOG_TABLE, function () {
+                this.on(`${ACTIVE_LOG_TABLE}.connection_id`, '_nango_connections.id').andOn(`${ACTIVE_LOG_TABLE}.active`, db.knex.raw(true));
+            })
+            .where({
+                '_nango_connections.environment_id': environmentId,
+                '_nango_connections.deleted': false
+            })
+            .orderBy('_nango_connections.created_at', 'desc')
+            .groupBy('_nango_connections.id', 'end_users.id', '_nango_configs.provider')
+            .limit(limit)
+            .offset(page * limit);
+
+        if (search) {
+            query.where(function () {
+                this.whereRaw('_nango_connections.connection_id ILIKE ?', `%${search}%`)
+                    .orWhereRaw('end_users.display_name ILIKE ?', `%${search}%`)
+                    .orWhereRaw('end_users.email ILIKE ?', `%${search}%`);
+            });
+        }
+        if (integrationIds) {
+            query.whereIn('_nango_configs.unique_key', integrationIds);
+        }
+        if (connectionId) {
+            query.where('_nango_connections.connection_id', connectionId);
+        }
+        if (endUserId) {
+            query.where('end_users.end_user_id', endUserId);
+        }
+        if (endUserOrganizationId) {
+            query.where('end_users.organization_id', endUserOrganizationId);
+        }
+
+        if (withError === false) {
+            query.havingRaw('count(_nango_active_logs.id) = 0');
+        } else if (withError === true) {
+            query.havingRaw('count(_nango_active_logs.id) > 0');
+        }
+
+        return await query;
     }
 
     public async deleteConnection({
@@ -921,14 +784,18 @@ class ConnectionService {
         providerConfigKey,
         environmentId,
         orchestrator,
-        logContextGetter
+        logContextGetter,
+        preDeletionHook
     }: {
         connection: Connection;
         providerConfigKey: string;
         environmentId: number;
         orchestrator: Orchestrator;
         logContextGetter: LogContextGetter;
+        preDeletionHook: () => Promise<void>;
     }): Promise<number> {
+        await preDeletionHook();
+
         const del = await db.knex
             .from<Connection>(`_nango_connections`)
             .where({
@@ -939,6 +806,8 @@ class ConnectionService {
             })
             .update({ deleted: true, credentials: {}, credentials_iv: null, credentials_tag: null, deleted_at: new Date() });
 
+        // TODO: move the following side effects to a post deletion hook
+        // so we can remove the orchestrator and logContextGetter dependencies
         await syncManager.softDeleteSyncsByConnection(connection, orchestrator);
         const slackService = new SlackService({ logContextGetter, orchestrator });
         await slackService.closeOpenNotificationForConnection({ connectionId: connection.id!, environmentId });
@@ -974,15 +843,13 @@ class ConnectionService {
             action: 'token_refresh' | 'connection_test';
         }) => Promise<void>;
         connectionTestHook?:
-            | ((
-                  providerName: string,
-                  provider: Provider,
-                  credentials: ApiKeyCredentials | BasicApiCredentials | TbaCredentials,
-                  connectionId: string,
-                  providerConfigKey: string,
-                  environment_id: number,
-                  connection_config: ConnectionConfig
-              ) => Promise<Result<boolean, NangoError>>)
+            | ((args: {
+                  config: Config;
+                  provider: Provider;
+                  credentials: ApiKeyCredentials | BasicApiCredentials | TbaCredentials | JwtCredentials | SignatureCredentials;
+                  connectionId: string;
+                  connectionConfig: ConnectionConfig;
+              }) => Promise<Result<{ logs: MessageRowInsert[] }, NangoError>>)
             | undefined;
     }): Promise<Result<Connection, NangoError>> {
         const provider = getProvider(integration.provider);
@@ -994,17 +861,19 @@ class ConnectionService {
         const copy = { ...connection };
 
         if (
-            connection.credentials?.type === 'OAUTH2' ||
-            connection.credentials?.type === 'APP' ||
-            connection.credentials?.type === 'OAUTH2_CC' ||
-            connection.credentials?.type === 'TABLEAU' ||
-            connection.credentials?.type === 'JWT' ||
-            connection.credentials?.type === 'BILL'
+            connection?.credentials?.type === 'OAUTH2' ||
+            connection?.credentials?.type === 'APP' ||
+            connection?.credentials?.type === 'OAUTH2_CC' ||
+            connection?.credentials?.type === 'TABLEAU' ||
+            connection?.credentials?.type === 'JWT' ||
+            connection?.credentials?.type === 'BILL' ||
+            connection?.credentials?.type === 'TWO_STEP' ||
+            connection?.credentials?.type === 'SIGNATURE'
         ) {
             const { success, error, response } = await this.refreshCredentialsIfNeeded({
                 connectionId: connection.connection_id,
                 environmentId: environment.id,
-                providerConfig: integration,
+                providerConfig: integration as ProviderConfig,
                 provider: provider as ProviderOAuth2,
                 environment_id: environment.id,
                 instantRefresh
@@ -1034,7 +903,7 @@ class ConnectionService {
                         },
                         environment,
                         provider,
-                        config: integration,
+                        config: integration as ProviderConfig,
                         action: 'token_refresh'
                     });
                 }
@@ -1051,22 +920,20 @@ class ConnectionService {
                 await onRefreshSuccess({
                     connection,
                     environment,
-                    config: integration
+                    config: integration as ProviderConfig
                 });
             }
 
             copy.credentials = response.credentials as OAuth2Credentials;
         } else if (connection.credentials?.type === 'BASIC' || connection.credentials?.type === 'API_KEY' || connection.credentials?.type === 'TBA') {
             if (connectionTestHook) {
-                const result = await connectionTestHook(
-                    integration.provider,
+                const result = await connectionTestHook({
+                    config: integration as ProviderConfig,
                     provider,
-                    connection.credentials,
-                    connection.connection_id,
-                    integration.unique_key,
-                    environment.id,
-                    connection.connection_config
-                );
+                    connectionConfig: connection.connection_config,
+                    connectionId: connection.connection_id,
+                    credentials: connection.credentials
+                });
                 if (result.isErr()) {
                     const logCtx = await logContextGetter.create(
                         { operation: { type: 'auth', action: 'connection_test' } },
@@ -1077,6 +944,13 @@ class ConnectionService {
                             connection: { id: connection.id!, name: connection.connection_id }
                         }
                     );
+                    if ('logs' in result.error.payload) {
+                        await Promise.all(
+                            (result.error.payload['logs'] as MessageRowInsert[]).map(async (log) => {
+                                await logCtx.log(log);
+                            })
+                        );
+                    }
 
                     await logCtx.error('Failed to verify connection', result.error);
                     await logCtx.failed();
@@ -1089,7 +963,7 @@ class ConnectionService {
                         },
                         environment,
                         provider,
-                        config: integration,
+                        config: integration as ProviderConfig,
                         action: 'connection_test'
                     });
 
@@ -1104,7 +978,7 @@ class ConnectionService {
                     await onRefreshSuccess({
                         connection,
                         environment,
-                        config: integration
+                        config: integration as ProviderConfig
                     });
                 }
             }
@@ -1121,7 +995,7 @@ class ConnectionService {
 
     // Parses and arbitrary object (e.g. a server response or a user provided auth object) into AuthCredentials.
     // Throws if values are missing/missing the input is malformed.
-    public parseRawCredentials(rawCredentials: object, authMode: AuthModeType, template?: ProviderOAuth2): AuthCredentials {
+    public parseRawCredentials(rawCredentials: object, authMode: AuthModeType, template?: ProviderOAuth2 | ProviderTwoStep): AuthCredentials {
         const rawCreds = rawCredentials as Record<string, any>;
 
         switch (authMode) {
@@ -1176,7 +1050,7 @@ class ConnectionService {
                     expiresAt = parseTokenExpirationDate(rawCreds['expires_at']);
                 } else if (rawCreds['expires_in']) {
                     const expiresIn = Number.parseInt(rawCreds['expires_in'], 10);
-                    const multiplier = template?.expires_in_unit === 'milliseconds' ? 1 : 1000;
+                    const multiplier = template && 'expires_in_unit' in template && template.expires_in_unit === 'milliseconds' ? 1 : 1000;
                     expiresAt = new Date(Date.now() + expiresIn * multiplier);
                 } else {
                     expiresAt = new Date(Date.now() + DEFAULT_EXPIRES_AT_MS);
@@ -1233,6 +1107,42 @@ class ConnectionService {
                 return billCredentials;
             }
 
+            case 'TWO_STEP': {
+                if (!template || !('token_response' in template)) {
+                    throw new NangoError(`Token response structure is missing for TWO_STEP.`);
+                }
+
+                const tokenPath = template.token_response.token;
+                const expirationPath = template.token_response.token_expiration;
+                const expirationStrategy = template.token_response.token_expiration_strategy;
+
+                const token = extractValueByPath(rawCreds, tokenPath);
+                const expiration = extractValueByPath(rawCreds, expirationPath);
+
+                if (!token) {
+                    throw new NangoError(`incomplete_raw_credentials`);
+                }
+                let expiresAt: Date | undefined;
+
+                if (expirationStrategy === 'expireAt' && expiration) {
+                    expiresAt = parseTokenExpirationDate(expiration);
+                } else if (expirationStrategy === 'expireIn' && expiration) {
+                    const expiresIn = Number.parseInt(expiration, 10);
+                    expiresAt = new Date(Date.now() + expiresIn * 1000);
+                } else if (template.token_expires_in_ms) {
+                    expiresAt = new Date(Date.now() + template.token_expires_in_ms);
+                }
+
+                const twoStepCredentials: TwoStepCredentials = {
+                    type: 'TWO_STEP',
+                    token: token,
+                    expires_at: expiresAt,
+                    raw: rawCreds
+                };
+
+                return twoStepCredentials;
+            }
+
             default:
                 throw new NangoError(`Cannot parse credentials, unknown credentials type: ${JSON.stringify(rawCreds, undefined, 2)}`);
         }
@@ -1262,7 +1172,9 @@ class ConnectionService {
                 | OAuth2ClientCredentials
                 | TableauCredentials
                 | JwtCredentials
-                | BillCredentials;
+                | TwoStepCredentials
+                | BillCredentials
+                | SignatureCredentials;
         }>
     > {
         const providerConfigKey = providerConfig.unique_key;
@@ -1277,7 +1189,9 @@ class ConnectionService {
                 | OAuth2ClientCredentials
                 | TableauCredentials
                 | JwtCredentials
+                | TwoStepCredentials
                 | BillCredentials
+                | SignatureCredentials
                 | null;
         }> => {
             const { success, error, response: connection } = await this.getConnection(connectionId, providerConfigKey, environmentId);
@@ -1305,7 +1219,9 @@ class ConnectionService {
                           | OAuth2ClientCredentials
                           | TableauCredentials
                           | JwtCredentials
-                          | BillCredentials)
+                          | TwoStepCredentials
+                          | BillCredentials
+                          | SignatureCredentials)
             };
         };
 
@@ -1589,12 +1505,12 @@ class ConnectionService {
             parsedCreds.client_secret = client_secret;
 
             return { success: true, error: null, response: parsedCreds };
-        } catch (e: any) {
+        } catch (err: any) {
             const errorPayload = {
-                message: e.message || 'Unknown error',
-                name: e.name || 'Error'
+                message: err.message || 'Unknown error',
+                name: err.name || 'Error'
             };
-            logger.error(`Error fetching client credentials ${stringifyError(e)}`);
+            logger.error(`Error fetching client credentials ${stringifyError(err)}`);
             const error = new NangoError('client_credentials_fetch_error', errorPayload);
             return { success: false, error, response: null };
         }
@@ -1641,12 +1557,12 @@ class ConnectionService {
             parsedCreds.content_url = contentUrl ?? '';
 
             return { success: true, error: null, response: parsedCreds };
-        } catch (e: any) {
+        } catch (err: any) {
             const errorPayload = {
-                message: e.message || 'Unknown error',
-                name: e.name || 'Error'
+                message: err.message || 'Unknown error',
+                name: err.name || 'Error'
             };
-            logger.error(`Error fetching Tableau credentials tokens ${stringifyError(e)}`);
+            logger.error(`Error fetching Tableau credentials tokens ${stringifyError(err)}`);
             const error = new NangoError('tableau_tokens_fetch_error', errorPayload);
 
             return { success: false, error, response: null };
@@ -1761,14 +1677,130 @@ class ConnectionService {
             parsedCreds.dev_key = devKey;
 
             return { success: true, error: null, response: parsedCreds };
-        } catch (e: any) {
+        } catch (err: any) {
             const errorPayload = {
-                message: e.message || 'Unknown error',
-                name: e.name || 'Error'
+                message: err.message || 'Unknown error',
+                name: err.name || 'Error'
             };
-            logger.error(`Error fetching Bill credentials ${stringifyError(e)}`);
+            logger.error(`Error fetching Bill credentials ${stringifyError(err)}`);
             const error = new NangoError('bill_credentials_fetch_error', errorPayload);
 
+            return { success: false, error, response: null };
+        }
+    }
+
+    public async getTwoStepCredentials(
+        provider: ProviderTwoStep,
+        dynamicCredentials: Record<string, any>,
+        connectionConfig: Record<string, string>
+    ): Promise<ServiceResponse<TwoStepCredentials>> {
+        const strippedTokenUrl = typeof provider.token_url === 'string' ? provider.token_url.replace(/connectionConfig\./g, '') : '';
+        const url = new URL(interpolateString(strippedTokenUrl, connectionConfig)).toString();
+
+        const bodyFormat = provider.body_format || 'json';
+
+        let postBody: Record<string, any> | string = {};
+
+        if (provider.token_params) {
+            for (const [key, value] of Object.entries(provider.token_params)) {
+                const strippedValue = stripCredential(value);
+
+                if (typeof strippedValue === 'object' && strippedValue !== null) {
+                    postBody[key] = interpolateObject(strippedValue, dynamicCredentials);
+                } else if (typeof strippedValue === 'string') {
+                    postBody[key] = interpolateString(strippedValue, dynamicCredentials);
+                } else {
+                    postBody[key] = strippedValue;
+                }
+            }
+            postBody = interpolateObjectValues(postBody, connectionConfig);
+        }
+
+        const headers: Record<string, string> = {};
+
+        if (provider.token_headers) {
+            for (const [key, value] of Object.entries(provider.token_headers)) {
+                headers[key] = value;
+            }
+        }
+
+        try {
+            const requestOptions = { headers };
+
+            const bodyContent =
+                bodyFormat === 'xml'
+                    ? new XMLBuilder({
+                          format: true,
+                          indentBy: '  ',
+                          attributeNamePrefix: '$',
+                          ignoreAttributes: false
+                      }).build(postBody)
+                    : bodyFormat === 'form'
+                      ? new URLSearchParams(postBody).toString()
+                      : JSON.stringify(postBody);
+
+            const response = await axios.post(url.toString(), bodyContent, requestOptions);
+
+            if (response.status !== 200) {
+                return { success: false, error: new NangoError('invalid_two_step_credentials'), response: null };
+            }
+
+            let responseData: any = response.data;
+
+            if (bodyFormat === 'xml' && typeof response.data === 'string') {
+                const parser = new XMLParser({
+                    ignoreAttributes: false,
+                    parseAttributeValue: true,
+                    trimValues: true
+                });
+
+                responseData = parser.parse(response.data);
+            }
+
+            const parsedCreds = this.parseRawCredentials(responseData, 'TWO_STEP', provider) as TwoStepCredentials;
+
+            for (const [key, value] of Object.entries(dynamicCredentials)) {
+                if (value !== undefined) {
+                    parsedCreds[key] = value;
+                }
+            }
+
+            return { success: true, error: null, response: parsedCreds };
+        } catch (err: any) {
+            const errorPayload = {
+                message: err.message || 'Unknown error',
+                name: err.name || 'Error'
+            };
+            logger.error(`Error fetching TwoStep credentials tokens ${stringifyError(err)}`);
+            const error = new NangoError('two_step_credentials_fetch_error', errorPayload);
+
+            return { success: false, error, response: null };
+        }
+    }
+
+    public getSignatureCredentials(provider: ProviderSignature, username: string, password: string): ServiceResponse<SignatureCredentials> {
+        try {
+            let token: string;
+
+            if (provider.signature.protocol === 'WSSE') {
+                token = generateWsseSignature(username, password);
+            } else {
+                throw new NangoError('unsupported_signature_protocol', { message: 'Signature protocol not supported' });
+            }
+
+            const expiresAt = new Date(Date.now() + provider.token.expires_in_ms);
+
+            const credentials: SignatureCredentials = {
+                type: 'SIGNATURE',
+                username,
+                password,
+                token,
+                expires_at: expiresAt
+            };
+
+            return { success: true, error: null, response: credentials };
+        } catch (err) {
+            const error = new NangoError('signature_token_generation_error', { message: err instanceof Error ? err.message : 'unknown error' });
             return { success: false, error, response: null };
         }
     }
@@ -1868,7 +1900,15 @@ class ConnectionService {
         provider: Provider
     ): Promise<
         ServiceResponse<
-            OAuth2Credentials | OAuth2ClientCredentials | AppCredentials | AppStoreCredentials | TableauCredentials | JwtCredentials | BillCredentials
+            | OAuth2Credentials
+            | OAuth2ClientCredentials
+            | AppCredentials
+            | AppStoreCredentials
+            | TableauCredentials
+            | JwtCredentials
+            | BillCredentials
+            | TwoStepCredentials
+            | SignatureCredentials
         >
     > {
         if (providerClient.shouldUseProviderClient(providerConfig.provider)) {
@@ -1931,6 +1971,28 @@ class ConnectionService {
         } else if (provider.auth_mode === 'BILL') {
             const { username, password, organization_id, dev_key } = connection.credentials as BillCredentials;
             const { success, error, response: credentials } = await this.getBillCredentials(provider, username, password, organization_id, dev_key);
+
+            if (!success || !credentials) {
+                return { success, error, response: null };
+            }
+
+            return { success: true, error: null, response: credentials };
+        } else if (provider.auth_mode === 'TWO_STEP') {
+            const { token, expires_at, type, raw, ...dynamicCredentials } = connection.credentials as TwoStepCredentials;
+            const {
+                success,
+                error,
+                response: credentials
+            } = await this.getTwoStepCredentials(provider as ProviderTwoStep, dynamicCredentials, connection.connection_config);
+
+            if (!success || !credentials) {
+                return { success, error, response: null };
+            }
+
+            return { success: true, error: null, response: credentials };
+        } else if (provider.auth_mode === 'SIGNATURE') {
+            const { username, password } = connection.credentials as SignatureCredentials;
+            const { success, error, response: credentials } = this.getSignatureCredentials(provider as ProviderSignature, username, password);
 
             if (!success || !credentials) {
                 return { success, error, response: null };

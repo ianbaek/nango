@@ -45,6 +45,7 @@ interface SourceSchedule {
     environment_id: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/consistent-indexed-object-style
 type JsonObject = { [Key in string]: JsonValue } & { [Key in string]?: JsonValue | undefined };
 type JsonArray = JsonValue[] | readonly JsonValue[];
 type JsonPrimitive = string | number | boolean | null;
@@ -147,8 +148,8 @@ async function migrate() {
 
 const start = new Date();
 migrate()
-    .catch((error: unknown) => {
-        console.error('Error occurred during data migration:', error);
+    .catch((err: unknown) => {
+        console.error('Error occurred during data migration:', err);
     })
     .finally(async () => {
         await sourceKnex.destroy();

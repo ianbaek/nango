@@ -1,34 +1,54 @@
 ---
 title: Notion
 sidebarTitle: Notion
+provider: notion
 ---
 
-API configuration: [`notion`](https://nango.dev/providers.yaml)
+import Overview from "/snippets/overview.mdx";
+import PreBuiltTooling from "/snippets/generated/notion/PreBuiltTooling.mdx";
 
-## Features
+import PreBuiltUseCases from "/snippets/generated/notion/PreBuiltUseCases.mdx"
 
-| Features | Status |
-| - | - |
-| [Auth (OAuth)](/integrate/guides/authorize-an-api) | ✅ |
-| [Sync data](/integrate/guides/sync-data-from-an-api) | ✅ |
-| [Perform workflows](/integrate/guides/perform-workflows-with-an-api) | ✅ |
-| [Proxy requests](/integrate/guides/proxy-requests-to-an-api) | ✅ |
-| [Receive webhooks](/integrate/guides/receive-webhooks-from-an-api) | 🚫 (time to contribute: &lt;48h) |
+<Overview />
+<PreBuiltTooling />
+<PreBuiltUseCases />
 
-<Tip>We can implement missing features in &lt;48h, just ask for it in the [community](https://nango.dev/slack).</Tip>
+## Access requirements
+| Pre-Requisites | Status | Comment|
+| - | - | - |
+| Paid dev account | ❓ |  |
+| Paid test account | ❓ |  |
+| Partnership | ❓ | |
+| App review | ❓ |  |
+| Security audit | ❓ | |
 
-## Getting started
+
+## Setup guide
+
+_No setup guide yet._
+
+<Tip>Need help getting started? Get help in the [community](https://nango.dev/slack).</Tip>
+
+<Note>Contribute improvements to the setup guide by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/notion.mdx)</Note>
+
+
+## Useful links
 
 -   [How to register an Application](https://developers.notion.com/docs/authorization)
 -   [OAuth-related docs](https://developers.notion.com/docs/authorization#public-integration-auth-flow-set-up)
 -   [API reference](https://developers.notion.com/reference/intro)
 
-<Tip>Need help getting started? Get help in the [community](https://nango.dev/slack).</Tip>
+<Note>Contribute useful links by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/notion.mdx)</Note>
 
 ## API gotchas
 
 - The Notion OAuth API doesn't support refreshing tokens, and so doesn't return a refresh token. The access token never expires.
 - Your Notion OAuth app will have the status "internal". You need to [make it "public"](https://developers.notion.com/docs/authorization#how-to-make-an-integration-public) to be able to initiate an OAuth flow. Only then, you will be able to get the OAuth client ID/secret and register your callback URL.
 - No OAuth scope is required by default.
+- Notion SCIM is an enterprise only API that uses an API token. See the Notion [docs](https://www.notion.so/help/provision-users-and-groups-with-scim) for more information
 
-<Note>Add Getting Started links and Gotchas by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/notion.mdx)</Note>
+<Note>Contribute API gotchas by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/notion.mdx)</Note>
+
+<Card title="Connect to notion-scim" icon="link" href="/integrations/all/notion-scim/connect" horizontal>
+  Guide to connect to notion-scim using Nango Connect.
+</Card>

@@ -6,15 +6,16 @@ import Module from 'node:module';
 import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import semver from 'semver';
-import util from 'util';
-import { exec, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import promptly from 'promptly';
 import chalk from 'chalk';
-import { cloudHost, stagingHost, NANGO_VERSION } from '@nangohq/shared';
 import * as dotenv from 'dotenv';
 import { state } from './state.js';
 import https from 'node:https';
 import type { NangoConnection } from '@nangohq/types';
+import { NANGO_VERSION } from './version.js';
+import { cloudHost } from './constants.js';
+import type { PackageJson } from 'type-fest';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,14 +24,10 @@ const require = Module.createRequire(import.meta.url);
 
 dotenv.config();
 
-const execPromise = util.promisify(exec);
-
-export const NANGO_INTEGRATIONS_NAME = 'nango-integrations';
 export const NANGO_INTEGRATIONS_LOCATION = process.env['NANGO_INTEGRATIONS_LOCATION'] || './';
 export const isCI = process.env['CI'];
 const IGNORE_UPGRADE_FOR = 86400 * 1000;
 
-export const port = process.env['NANGO_PORT'] || '3003';
 let parsedHostport = process.env['NANGO_HOSTPORT'] || cloudHost;
 
 if (parsedHostport.slice(-1) === '/') {
@@ -39,27 +36,8 @@ if (parsedHostport.slice(-1) === '/') {
 
 export const hostport = parsedHostport;
 
-export function setCloudHost() {
-    process.env['NANGO_HOSTPORT'] = cloudHost;
-}
-
-export function setStagingHost() {
-    process.env['NANGO_HOSTPORT'] = stagingHost;
-}
-
 export function printDebug(message: string) {
     console.log(chalk.gray(message));
-}
-
-export async function isGlobal(packageName: string) {
-    try {
-        const { stdout } = await execPromise(`npm list -g --depth=0 ${packageName}`);
-
-        return stdout.includes(packageName);
-    } catch (err) {
-        console.error(`Error checking if package is global: ${err}`);
-        return false;
-    }
 }
 
 export function isLocallyInstalled(packageName: string, debug = false) {
@@ -75,7 +53,7 @@ export function isLocallyInstalled(packageName: string, debug = false) {
                     printDebug(`Ignoring npx cache directory: ${dir} while trying to find if nango is locally installed.`);
                 }
             } else if (fs.existsSync(packageJsonPath)) {
-                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as PackageJson;
 
                 const dependencies = packageJson.dependencies || {};
                 const devDependencies = packageJson.devDependencies || {};
@@ -90,31 +68,9 @@ export function isLocallyInstalled(packageName: string, debug = false) {
 
         return false;
     } catch (err) {
-        console.error(`Error checking if package is installed: ${err}`);
+        console.error(`Error checking if package is installed`, err);
         return false;
     }
-}
-
-export function checkEnvVars(optionalHostport?: string) {
-    const hostport = optionalHostport || process.env['NANGO_HOSTPORT'] || `http://localhost:${port}`;
-
-    if (hostport === `http://localhost:${port}`) {
-        console.log(`Assuming you are running Nango on localhost:${port} because you did not set the NANGO_HOSTPORT env var.\n\n`);
-    } else if (hostport === cloudHost || hostport === stagingHost) {
-        if (!process.env['NANGO_SECRET_KEY']) {
-            console.log(`Assuming you are using Nango Cloud but you are missing the NANGO_SECRET_KEY env var.`);
-        } else if (hostport === cloudHost) {
-            console.log(`Assuming you are using Nango Cloud (because you set the NANGO_HOSTPORT env var to https://api.nango.dev).`);
-        } else if (hostport === stagingHost) {
-            console.log(`Assuming you are using Nango Cloud (because you set the NANGO_HOSTPORT env var to https://api.staging.nango.dev).`);
-        }
-    } else {
-        console.log(`Assuming you are self-hosting Nango (because you set the NANGO_HOSTPORT env var to ${hostport}).`);
-    }
-}
-
-export function getPkgVersion() {
-    return NANGO_VERSION;
 }
 
 export async function upgradeAction(debug = false) {
@@ -146,7 +102,7 @@ export async function upgradeAction(debug = false) {
 
     try {
         const resolved = npa('nango');
-        const version = getPkgVersion();
+        const version = NANGO_VERSION;
         if (debug) {
             printDebug(`Version ${version} of nango is installed.`);
         }
@@ -213,8 +169,8 @@ export async function upgradeAction(debug = false) {
 
             child.on('error', reject);
         });
-    } catch (error: any) {
-        console.error(`An error occurred: ${error.message}`);
+    } catch (err: any) {
+        console.error(`An error occurred: ${err.message}`);
     }
 }
 
@@ -270,7 +226,7 @@ export const http = axios.create({
 });
 
 export function getUserAgent(): string {
-    const clientVersion = getPkgVersion();
+    const clientVersion = NANGO_VERSION;
     const nodeVersion = process.versions.node;
 
     const osName = os.platform().replace(' ', '_');
@@ -333,8 +289,8 @@ export async function parseSecretKey(environment: string, debug = false): Promis
             } else {
                 return;
             }
-        } catch (error) {
-            console.log('Error occurred while trying to prompt for secret key:', error);
+        } catch (err) {
+            console.log('Error occurred while trying to prompt for secret key:', err);
             process.exit(1);
         }
     }

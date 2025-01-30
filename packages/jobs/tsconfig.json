@@ -12,6 +12,9 @@
             "path": "../kvstore"
         },
         {
+            "path": "../orchestrator"
+        },
+        {
             "path": "../logs"
         },
         {
@@ -24,6 +27,12 @@
             "path": "../runner"
         },
         {
+            "path": "../runner-sdk"
+        },
+        {
+            "path": "../types"
+        },
+        {
             "path": "../utils"
         },
         {
@@ -34,6 +43,9 @@
         },
         {
             "path": "../orchestrator"
+        },
+        {
+            "path": "../fleet"
         }
     ],
     "include": ["lib/**/*"]

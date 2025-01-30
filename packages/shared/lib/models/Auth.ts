@@ -24,6 +24,7 @@ export interface OAuthSession {
     callbackUrl: string;
     authMode: AuthModeType;
     id: string;
+    connectSessionId: number | null;
     connectionConfig: Record<string, string>;
     environmentId: number;
     webSocketClientId: string | undefined;
@@ -58,7 +59,18 @@ export interface ApiKeyCredentials {
     apiKey: string;
 }
 
-export type AuthCredentials = OAuth2Credentials | OAuth1Credentials | OAuth2ClientCredentials | TbaCredentials | TableauCredentials | BillCredentials;
+export type AuthCredentials =
+    | OAuth2Credentials
+    | OAuth1Credentials
+    | OAuth2ClientCredentials
+    | TbaCredentials
+    | TableauCredentials
+    | BillCredentials
+    | TwoStepCredentials
+    | SignatureCredentials
+    | JwtCredentials
+    | ApiKeyCredentials
+    | BasicApiCredentials;
 
 export interface AppCredentials {
     type?: 'APP';
@@ -146,6 +158,13 @@ export interface JwtCredentials {
     expires_at?: Date | undefined;
 }
 
+export interface TwoStepCredentials extends CredentialsCommon {
+    type: 'TWO_STEP';
+    [key: string]: any;
+    token?: string;
+    expires_at?: Date | undefined;
+}
+
 export interface BillCredentials extends CredentialsCommon {
     type: 'BILL';
     username: string;
@@ -154,6 +173,14 @@ export interface BillCredentials extends CredentialsCommon {
     dev_key: string;
     session_id?: string;
     user_id?: string;
+    expires_at?: Date | undefined;
+}
+
+export interface SignatureCredentials {
+    type: 'SIGNATURE';
+    username: string;
+    password: string;
+    token?: string;
     expires_at?: Date | undefined;
 }
 

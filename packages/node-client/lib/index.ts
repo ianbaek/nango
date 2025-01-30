@@ -6,6 +6,7 @@ import https from 'node:https';
 import type {
     ApiKeyCredentials,
     AppCredentials,
+    OAuth1Token,
     AppStoreCredentials,
     BasicApiCredentials,
     CredentialsCommon,
@@ -21,11 +22,14 @@ import type {
     GetPublicListIntegrationsLegacy,
     GetPublicIntegration,
     PostConnectSessions,
-    JwtCredentials
+    JwtCredentials,
+    TwoStepCredentials,
+    GetPublicConnections,
+    SignatureCredentials,
+    PostPublicConnectSessionsReconnect,
+    GetPublicConnection
 } from '@nangohq/types';
 import type {
-    Connection,
-    ConnectionList,
     CreateConnectionOAuth1,
     CreateConnectionOAuth2,
     Integration,
@@ -34,7 +38,6 @@ import type {
     Metadata,
     MetadataChangeResponse,
     NangoProps,
-    OAuth1Token,
     ProxyConfiguration,
     RecordMetadata,
     StandardNangoConfig,
@@ -43,7 +46,6 @@ import type {
 } from './types.js';
 import { addQueryParams, getUserAgent, validateProxyConfiguration, validateSyncRecordConfiguration } from './utils.js';
 
-export const stagingHost = 'https://api-staging.nango.dev';
 export const prodHost = 'https://api.nango.dev';
 
 export * from './types.js';
@@ -64,6 +66,7 @@ export interface AdminAxiosProps {
         request?: AxiosInterceptorManager<AxiosRequestConfig>;
         response?: {
             onFulfilled: (value: AxiosResponse) => AxiosResponse | Promise<AxiosResponse>;
+            onRejected?: (error: unknown) => unknown;
         };
     };
 }
@@ -122,7 +125,7 @@ export class Nango {
         });
 
         if (interceptors?.response) {
-            this.http.interceptors.response.use(interceptors.response.onFulfilled, undefined);
+            this.http.interceptors.response.use(interceptors.response.onFulfilled, interceptors.response.onRejected);
         }
     }
 
@@ -197,15 +200,17 @@ export class Nango {
         params: string | GetPublicIntegration['Params'],
         queries?: boolean | GetPublicIntegration['Querystring']
     ): Promise<{ config: Integration | IntegrationWithCreds } | GetPublicIntegration['Success']> {
+        const headers = { 'Content-Type': 'application/json' };
+
         if (typeof params === 'string') {
             const url = `${this.serverUrl}/config/${params}`;
-            const response = await this.http.get(url, { headers: this.enrichHeaders({}), params: { include_creds: queries } });
+            const response = await this.http.get(url, { headers: this.enrichHeaders(headers), params: { include_creds: queries } });
             return response.data;
         } else {
             const url = new URL(`${this.serverUrl}/integrations/${params.uniqueKey}`);
             addQueryParams(url, queries as GetPublicIntegration['Querystring']);
 
-            const response = await this.http.get(url.href, { headers: this.enrichHeaders({}) });
+            const response = await this.http.get(url.href, { headers: this.enrichHeaders(headers) });
             return response.data;
         }
     }
@@ -227,7 +232,7 @@ export class Nango {
     /**
      * Updates an integration with the specified provider and configuration key
      * Only integrations using OAuth 1 & 2 can be updated, not integrations using API keys & Basic auth (because there is nothing to update for them)
-     * @param provider - The Nango API Configuration (cf. [providers.yaml](https://github.com/NangoHQ/nango/blob/master/packages/shared/providers.yaml))
+     * @param provider - The Nango API Configuration (cf. [providers.yaml](https://github.com/NangoHQ/nango/blob/master/packages/providers/providers.yaml))
      * @param providerConfigKey - The key identifying the provider configuration on Nango
      * @param credentials - Optional credentials to include, depending on the specific integration that you want to update
      * @returns A promise that resolves with the updated integration configuration object
@@ -264,13 +269,37 @@ export class Nango {
 
     /**
      * Returns a list of connections, optionally filtered by connection ID
-     * @param connectionId - Optional. The ID of the connection to retrieve details of
+     * @param connectionId - Optional. Will exactly match a given connectionId. Can return multiple connections with the same ID across integrations
+     * @param search - Optional. Search connections. Will search in connection ID or end user profile.
      * @returns A promise that resolves with an array of connection objects
      */
-    public async listConnections(connectionId?: string): Promise<{ connections: ConnectionList[] }> {
-        const response = await this.listConnectionDetails(connectionId);
+    public async listConnections(
+        connectionId?: string,
+        search?: string,
+        queries?: Omit<GetPublicConnections['Querystring'], 'connectionId' | 'search'>
+    ): Promise<GetPublicConnections['Success']> {
+        const url = new URL(`${this.serverUrl}/connection`);
+        if (connectionId) {
+            url.searchParams.append('connectionId', connectionId);
+        }
+        if (search) {
+            url.searchParams.append('search', search);
+        }
+        if (queries?.endUserId) {
+            url.searchParams.append('endUserId', queries.endUserId);
+        }
+        if (queries?.endUserOrganizationId) {
+            url.searchParams.append('endUserOrganizationId', queries.endUserOrganizationId);
+        }
+
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+
+        const response = await this.http.get(url.href, { headers: this.enrichHeaders(headers) });
         return response.data;
     }
+
     /**
      * Returns a connection object, which also contains access credentials and full credentials payload
      * @param providerConfigKey - The integration ID used to create the connection (i.e Unique Key)
@@ -279,7 +308,12 @@ export class Nango {
      * @param refreshToken - Optional. When set to true, this returns the refresh token as part of the response
      * @returns A promise that resolves with a connection object
      */
-    public async getConnection(providerConfigKey: string, connectionId: string, forceRefresh?: boolean, refreshToken?: boolean): Promise<Connection> {
+    public async getConnection(
+        providerConfigKey: string,
+        connectionId: string,
+        forceRefresh?: boolean,
+        refreshToken?: boolean
+    ): Promise<GetPublicConnection['Success']> {
         const response = await this.getConnectionDetails(providerConfigKey, connectionId, forceRefresh, refreshToken);
         return response.data;
     }
@@ -325,6 +359,8 @@ export class Nango {
         | TableauCredentials
         | JwtCredentials
         | BillCredentials
+        | TwoStepCredentials
+        | SignatureCredentials
     > {
         const response = await this.getConnectionDetails(providerConfigKey, connectionId, forceRefresh);
 
@@ -648,11 +684,11 @@ export class Nango {
             throw new Error('Provider Config Key is required');
         }
 
-        if (typeof sync === 'string') {
+        if (typeof sync !== 'string') {
             throw new Error('Sync must be a string.');
         }
 
-        if (typeof connectionId === 'string') {
+        if (typeof connectionId !== 'string') {
             throw new Error('ConnectionId must be a string.');
         }
 
@@ -709,6 +745,7 @@ export class Nango {
      * @param input - An optional input data for the action
      * @returns A promise that resolves with an object containing the response data from the triggered action
      */
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
     public async triggerAction<In = unknown, Out = object>(providerConfigKey: string, connectionId: string, actionName: string, input?: In): Promise<Out> {
         const url = `${this.serverUrl}/action/trigger`;
 
@@ -903,6 +940,18 @@ export class Nango {
     }
 
     /**
+     * Creates a new connect session dedicated for reconnecting
+     * @param sessionProps - The properties for the new session, including end user information
+     * @returns A promise that resolves with the created session token and expiration date
+     */
+    public async createReconnectSession(sessionProps: PostPublicConnectSessionsReconnect['Body']): Promise<PostPublicConnectSessionsReconnect['Success']> {
+        const url = `${this.serverUrl}/connect/sessions/reconnect`;
+
+        const response = await this.http.post(url, sessionProps, { headers: this.enrichHeaders() });
+        return response.data;
+    }
+
+    /**
      * Retrieves details of a specific connection
      * @param providerConfigKey - The key identifying the provider configuration on Nango
      * @param connectionId - The ID of the connection for which to retrieve connection details
@@ -917,7 +966,7 @@ export class Nango {
         forceRefresh: boolean = false,
         refreshToken: boolean = false,
         additionalHeader: Record<string, any> = {}
-    ): Promise<AxiosResponse<Connection>> {
+    ): Promise<AxiosResponse<GetPublicConnection['Success']>> {
         const url = `${this.serverUrl}/connection/${connectionId}`;
 
         const headers = {
@@ -937,24 +986,6 @@ export class Nango {
         };
 
         return this.http.get(url, { params: params, headers: this.enrichHeaders(headers) });
-    }
-
-    /**
-     * Retrieves details of all connections from the server or details of a specific connection if a connection ID is provided
-     * @param connectionId - Optional. This is the unique connection identifier used to identify this connection
-     * @returns A promise that resolves with the response containing connection details
-     */
-    private async listConnectionDetails(connectionId?: string): Promise<AxiosResponse<{ connections: ConnectionList[] }>> {
-        let url = `${this.serverUrl}/connection?`;
-        if (connectionId) {
-            url = url.concat(`connectionId=${connectionId}`);
-        }
-
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-
-        return this.http.get(url, { headers: this.enrichHeaders(headers) });
     }
 
     /**

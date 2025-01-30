@@ -1,5 +1,5 @@
 import { records as recordsService, format as recordsFormatter } from '@nangohq/records';
-import type { FormattedRecord, UnencryptedRecordData, UpsertSummary } from '@nangohq/records';
+import type { FormattedRecord, UnencryptedRecordData, UpsertSummary, MergingStrategy } from '@nangohq/records';
 import { errorManager, ErrorSourceEnum, LogActionEnum, updateSyncJobResult, getSyncConfigByJobId } from '@nangohq/shared';
 import tracer from 'dd-trace';
 import type { Span } from 'dd-trace';
@@ -20,7 +20,8 @@ export async function persistRecords({
     syncJobId,
     model,
     records,
-    activityLogId
+    activityLogId,
+    merging = { strategy: 'override' }
 }: {
     persistType: PersistType;
     environmentId: number;
@@ -32,7 +33,8 @@ export async function persistRecords({
     model: string;
     records: Record<string, any>[];
     activityLogId: string;
-}): Promise<Result<void>> {
+    merging?: MergingStrategy;
+}): Promise<Result<MergingStrategy>> {
     const active = tracer.scope().active();
     const recordsSizeInBytes = Buffer.byteLength(JSON.stringify(records), 'utf8');
     const span = tracer.startSpan('persistRecords', {
@@ -57,16 +59,18 @@ export async function persistRecords({
     switch (persistType) {
         case 'save':
             softDelete = false;
-            persistFunction = async (records: FormattedRecord[]) => recordsService.upsert({ records, connectionId: nangoConnectionId, model, softDelete });
+            persistFunction = async (records: FormattedRecord[]) =>
+                recordsService.upsert({ records, connectionId: nangoConnectionId, environmentId, model, softDelete, merging });
             break;
         case 'delete':
             softDelete = true;
-            persistFunction = async (records: FormattedRecord[]) => recordsService.upsert({ records, connectionId: nangoConnectionId, model, softDelete });
+            persistFunction = async (records: FormattedRecord[]) =>
+                recordsService.upsert({ records, connectionId: nangoConnectionId, environmentId, model, softDelete, merging });
             break;
         case 'update':
             softDelete = false;
             persistFunction = async (records: FormattedRecord[]) => {
-                return recordsService.update({ records, connectionId: nangoConnectionId, model });
+                return recordsService.update({ records, connectionId: nangoConnectionId, model, merging });
             };
             break;
     }
@@ -90,7 +94,7 @@ export async function persistRecords({
 
     const syncConfig = await getSyncConfigByJobId(syncJobId);
     if (syncConfig && !syncConfig?.models.includes(model)) {
-        const err = new Error(`The model '${model}' is not included in the declared sync models: ${syncConfig.models}.`);
+        const err = new Error(`The model '${model}' is not included in the declared sync models: ${syncConfig.models.join(', ')}.`);
         await logCtx.error(`The model '${model}' is not included in the declared sync models`);
 
         span.setTag('error', err).finish();
@@ -122,7 +126,7 @@ export async function persistRecords({
         metrics.increment(metrics.Types.PERSIST_RECORDS_SIZE_IN_BYTES, recordsSizeInBytes);
 
         span.finish();
-        return Ok(void 0);
+        return Ok(persistResult.value.nextMerging);
     } else {
         const content = `There was an issue with the batch ${persistType}. ${stringifyError(persistResult.error)}`;
 

@@ -1,7 +1,16 @@
 import { asyncWrapper } from '../../../../utils/asyncWrapper.js';
-import { requireEmptyBody, requireEmptyQuery, zodErrorToHTTP } from '@nangohq/utils';
+import { requireEmptyQuery, zodErrorToHTTP } from '@nangohq/utils';
 import type { PostConnectSessions, PostInternalConnectSessions } from '@nangohq/types';
-import { postConnectSessions } from '../../../connect/postSessions.js';
+import { bodySchema as originalBodySchema, postConnectSessions } from '../../../connect/postSessions.js';
+import { z } from 'zod';
+
+const bodySchema = z
+    .object({
+        allowed_integrations: originalBodySchema.shape.allowed_integrations,
+        end_user: originalBodySchema.shape.end_user,
+        organization: originalBodySchema.shape.organization
+    })
+    .strict();
 
 export const postInternalConnectSessions = asyncWrapper<PostInternalConnectSessions>((req, res, next) => {
     const valQuery = requireEmptyQuery(req, { withEnv: true });
@@ -10,18 +19,20 @@ export const postInternalConnectSessions = asyncWrapper<PostInternalConnectSessi
         return;
     }
 
-    const valBody = requireEmptyBody(req);
-    if (valBody) {
+    const valBody = bodySchema.safeParse(req.body);
+    if (!valBody.success) {
         res.status(400).send({ error: { code: 'invalid_body', errors: zodErrorToHTTP(valBody.error) } });
         return;
     }
 
-    const { user } = res.locals;
+    const body: PostInternalConnectSessions['Body'] = valBody.data;
 
-    // @ts-expect-error req.body is never but we want to fake it on purpose
+    // req.body is never but we want to fake it on purpose
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     req.body = {
-        end_user: { id: `nango_dashboard_${user.id}`, email: user.email, display_name: user.name }
+        allowed_integrations: body.allowed_integrations,
+        end_user: body.end_user,
+        organization: body.organization
     } satisfies PostConnectSessions['Body'];
 
     // @ts-expect-error on internal api we pass ?env= but it's not allowed in public api

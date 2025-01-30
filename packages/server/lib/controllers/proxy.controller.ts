@@ -8,10 +8,10 @@ import url from 'url';
 import querystring from 'querystring';
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { backOff } from 'exponential-backoff';
-import type { HTTP_VERB, UserProvidedProxyConfiguration, InternalProxyConfiguration, ApplicationConstructedProxyConfiguration, File } from '@nangohq/shared';
+import type { HTTP_METHOD, UserProvidedProxyConfiguration, InternalProxyConfiguration, ApplicationConstructedProxyConfiguration, File } from '@nangohq/shared';
 import { LogActionEnum, errorManager, ErrorSourceEnum, proxyService, connectionService, configService, featureFlags } from '@nangohq/shared';
-import { metrics, getLogger, axiosInstance as axios, getHeaders } from '@nangohq/utils';
-import { logContextGetter } from '@nangohq/logs';
+import { metrics, getLogger, axiosInstance as axios, getHeaders, redactHeaders, redactURL } from '@nangohq/utils';
+import { flushLogsBuffer, logContextGetter } from '@nangohq/logs';
 import { connectionRefreshFailed as connectionRefreshFailedHook, connectionRefreshSuccess as connectionRefreshSuccessHook } from '../hooks/hooks.js';
 import type { LogContext } from '@nangohq/logs';
 import type { RequestLocals } from '../utils/express.js';
@@ -35,8 +35,8 @@ class ProxyController {
 
         let logCtx: LogContext | undefined;
         try {
-            const connectionId = req.get('Connection-Id') as string;
-            const providerConfigKey = req.get('Provider-Config-Key') as string;
+            const connectionId = req.get('Connection-Id') || '';
+            const providerConfigKey = req.get('Provider-Config-Key') || '';
             const retries = req.get('Retries') as string;
             const baseUrlOverride = req.get('Base-Url-Override') as string;
             const decompress = req.get('Decompress') as string;
@@ -80,7 +80,7 @@ class ProxyController {
                 headers,
                 baseUrlOverride,
                 decompress: decompress === 'true' ? true : false,
-                method: method.toUpperCase() as HTTP_VERB,
+                method: method.toUpperCase() as HTTP_METHOD,
                 retryOn
             };
 
@@ -146,15 +146,7 @@ class ProxyController {
 
             const { success, error, response: proxyConfig, logs } = proxyService.configure(externalConfig, internalConfig);
 
-            // We batch save, since we have buffered the createdAt it shouldn't impact order
-            await Promise.all(
-                logs.map(async (log) => {
-                    if (log.level === 'debug' && !isDebug) {
-                        return;
-                    }
-                    await logCtx!.log(log);
-                })
-            );
+            await flushLogsBuffer(logs, logCtx);
 
             if (!success || !proxyConfig || error) {
                 errorManager.errResFromNangoErr(res, error);
@@ -164,7 +156,7 @@ class ProxyController {
                 return;
             }
 
-            await this.sendToHttpMethod({ res, method: method as HTTP_VERB, configBody: proxyConfig, logCtx, isDebug });
+            await this.sendToHttpMethod({ res, method: method as HTTP_METHOD, configBody: proxyConfig, logCtx, isDebug });
         } catch (err) {
             const connectionId = req.get('Connection-Id') as string;
             const providerConfigKey = req.get('Provider-Config-Key') as string;
@@ -186,12 +178,11 @@ class ProxyController {
             next(err);
         } finally {
             const reqHeaders = getHeaders(req.headers);
-            reqHeaders['authorization'] = 'REDACTED';
             await logCtx?.enrichOperation({
                 request: {
                     url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
                     method: req.method,
-                    headers: reqHeaders
+                    headers: redactHeaders({ headers: reqHeaders })
                 },
                 response: {
                     code: res.statusCode,
@@ -212,7 +203,7 @@ class ProxyController {
         isDebug
     }: {
         res: Response;
-        method: HTTP_VERB;
+        method: HTTP_METHOD;
         configBody: ApplicationConstructedProxyConfiguration;
         logCtx: LogContext;
         isDebug: boolean;
@@ -239,21 +230,23 @@ class ProxyController {
     private async handleResponse({
         res,
         responseStream,
+        requestConfig,
         config,
-        url,
         logCtx
     }: {
         res: Response;
         responseStream: AxiosResponse;
         config: ApplicationConstructedProxyConfiguration;
-        url: string;
+        requestConfig: AxiosRequestConfig;
         logCtx: LogContext;
     }) {
-        const safeHeaders = proxyService.stripSensitiveHeaders(config.headers, config);
-        await logCtx.http(`${config.method.toUpperCase()} ${url} was successful`, {
+        const valuesToFilter = Object.values(config.connection.credentials);
+        const safeHeaders = redactHeaders({ headers: requestConfig.headers, valuesToFilter });
+        const redactedURL = redactURL({ url: requestConfig.url!, valuesToFilter });
+        await logCtx.http(`${config.method} ${redactedURL} was successful`, {
             request: {
                 method: config.method,
-                url,
+                url: redactedURL,
                 headers: safeHeaders
             },
             response: {
@@ -262,13 +255,17 @@ class ProxyController {
             }
         });
 
-        const contentType = responseStream.headers['content-type'];
-        const isJsonResponse = contentType && contentType.includes('application/json');
-        const isChunked = responseStream.headers['transfer-encoding'] === 'chunked';
-        const isEncoded = Boolean(responseStream.headers['content-encoding']);
-        const isAttachment = responseStream.headers['content-disposition'] === 'attachment';
+        const contentType = responseStream.headers['content-type'] || '';
+        const contentDisposition = responseStream.headers['content-disposition'] || '';
+        const transferEncoding = responseStream.headers['transfer-encoding'] || '';
+        const contentEncoding = responseStream.headers['content-encoding'] || '';
 
-        if (isChunked || isEncoded || isAttachment) {
+        const isJsonResponse = contentType.includes('application/json');
+        const isChunked = transferEncoding === 'chunked';
+        const isEncoded = Boolean(contentEncoding);
+        const isAttachmentOrInline = /^(attachment|inline)(;|\s|$)/i.test(contentDisposition);
+
+        if (isChunked || isEncoded || isAttachmentOrInline) {
             const passThroughStream = new PassThrough();
             responseStream.data.pipe(passThroughStream);
             passThroughStream.pipe(res);
@@ -279,13 +276,19 @@ class ProxyController {
             return;
         }
 
-        let responseData = '';
+        const responseData: Buffer[] = [];
+        let responseLen = 0;
 
         responseStream.data.on('data', (chunk: Buffer) => {
-            responseData += chunk.toString();
+            responseData.push(chunk);
+            responseLen += chunk.length;
         });
 
         responseStream.data.on('end', async () => {
+            if (responseLen > 5_000_000) {
+                logger.info(`Response > 5MB: ${responseLen} bytes`);
+            }
+
             if (responseStream.status === 204) {
                 res.status(204).end();
                 metrics.increment(metrics.Types.PROXY_SUCCESS);
@@ -294,31 +297,43 @@ class ProxyController {
             }
 
             if (!isJsonResponse) {
-                res.send(responseData);
+                res.send(Buffer.concat(responseData));
                 await logCtx.success();
                 metrics.increment(metrics.Types.PROXY_SUCCESS);
                 return;
             }
 
             try {
-                const parsedResponse = JSON.parse(responseData);
+                const parsedResponse = JSON.parse(Buffer.concat(responseData).toString());
 
                 res.json(parsedResponse);
                 metrics.increment(metrics.Types.PROXY_SUCCESS);
                 await logCtx.success();
-            } catch (error) {
-                logger.error(error);
+            } catch (err) {
+                logger.error(err);
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'Failed to parse JSON response' }));
 
-                await logCtx.error('Failed to parse JSON response', { error });
+                await logCtx.error('Failed to parse JSON response', { error: err });
                 await logCtx.failed();
                 metrics.increment(metrics.Types.PROXY_FAILURE);
             }
         });
     }
 
-    private async handleErrorResponse(res: Response, e: unknown, url: string, config: ApplicationConstructedProxyConfiguration, logCtx: LogContext) {
+    private async handleErrorResponse({
+        res,
+        e,
+        config,
+        requestConfig,
+        logCtx
+    }: {
+        res: Response;
+        e: unknown;
+        config: ApplicationConstructedProxyConfiguration;
+        requestConfig: AxiosRequestConfig;
+        logCtx: LogContext;
+    }) {
         const error = e as AxiosError;
 
         if (!error.response?.data && error.toJSON) {
@@ -330,9 +345,9 @@ class ProxyController {
                 status
             } = error.toJSON() as any;
 
-            await this.reportError(error, url, config, message, logCtx);
+            await this.reportError({ error, config, requestConfig, errorContent: message, logCtx });
 
-            const errorObject = { message, stack, code, status, url, method };
+            const errorObject = { message, stack, code, status, url: requestConfig.url, method };
 
             const responseStatus = error.response?.status || 500;
             const responseHeaders = error.response?.headers || {};
@@ -373,7 +388,7 @@ class ProxyController {
                         // Intentionally left blank - errorData will be a string
                     }
                 }
-                void this.reportError(error, url, config, errorData, logCtx);
+                void this.reportError({ error, config, requestConfig, errorContent: errorData, logCtx });
             });
         } else {
             await logCtx.error('Unknown error');
@@ -392,7 +407,7 @@ class ProxyController {
         isDebug
     }: {
         res: Response;
-        method: HTTP_VERB;
+        method: HTTP_METHOD;
         url: string;
         config: ApplicationConstructedProxyConfiguration;
         decompress: boolean;
@@ -400,21 +415,21 @@ class ProxyController {
         logCtx: LogContext;
         isDebug: boolean;
     }) {
+        const logs: MessageRowInsert[] = [];
+        const headers = proxyService.constructHeaders(config, method, url);
+
+        if (isDebug) {
+            await logCtx.debug(`${method.toUpperCase()} ${url}`, { headers });
+        }
+
+        const requestConfig: AxiosRequestConfig = {
+            method,
+            url,
+            responseType: 'stream',
+            headers,
+            decompress
+        };
         try {
-            const logs: MessageRowInsert[] = [];
-            const headers = proxyService.constructHeaders(config, method, url);
-
-            if (isDebug) {
-                await logCtx.debug(`${method.toUpperCase()} ${url}`, { headers });
-            }
-
-            const requestConfig: AxiosRequestConfig = {
-                method,
-                url,
-                responseType: 'stream',
-                headers,
-                decompress
-            };
             if (data && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
                 requestConfig.data = data;
             }
@@ -425,38 +440,39 @@ class ProxyController {
                 { numOfAttempts: Number(config.retries), retry: proxyService.retry.bind(this, config, logs) }
             );
 
-            // We batch save, since we have buffered the createdAt it shouldn't impact order
-            await Promise.all(
-                logs.map(async (log) => {
-                    if (log.level === 'debug' && !isDebug) {
-                        return;
-                    }
-                    await logCtx.log(log);
-                })
-            );
+            await flushLogsBuffer(logs, logCtx);
 
-            await this.handleResponse({ res, responseStream, config, url, logCtx });
-        } catch (error) {
-            await this.handleErrorResponse(res, error, url, config, logCtx);
+            await this.handleResponse({ res, responseStream, config, requestConfig, logCtx });
+        } catch (err) {
+            await this.handleErrorResponse({ res, e: err, requestConfig, config, logCtx });
             metrics.increment(metrics.Types.PROXY_FAILURE);
         }
     }
 
-    private async reportError(
-        error: AxiosError,
-        url: string,
-        config: ApplicationConstructedProxyConfiguration,
-        errorContent: string | Record<string, string>,
-        logCtx: LogContext
-    ) {
-        const safeHeaders = proxyService.stripSensitiveHeaders(config.headers, config);
-        await logCtx.http(`${config.method.toUpperCase()} ${url} failed with status '${error.response?.status}'`, {
+    private async reportError({
+        error,
+        config,
+        requestConfig,
+        errorContent,
+        logCtx
+    }: {
+        error: AxiosError;
+        config: ApplicationConstructedProxyConfiguration;
+        requestConfig: AxiosRequestConfig;
+        errorContent: string | Record<string, string>;
+        logCtx: LogContext;
+    }) {
+        const valuesToFilter = Object.values(config.connection.credentials);
+        const safeHeaders = redactHeaders({ headers: requestConfig.headers, valuesToFilter });
+        const redactedURL = redactURL({ url: requestConfig.url!, valuesToFilter });
+
+        await logCtx.http(`${requestConfig.method} ${redactedURL} failed with status '${error.response?.status}'`, {
             meta: {
                 content: errorContent
             },
             request: {
                 method: config.method,
-                url,
+                url: redactedURL,
                 headers: safeHeaders
             },
             response: {

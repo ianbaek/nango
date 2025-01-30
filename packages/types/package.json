@@ -1,6 +1,6 @@
 {
     "name": "@nangohq/types",
-    "version": "0.42.18",
+    "version": "0.51.0",
     "description": "Types used in Nango applications",
     "type": "module",
     "typings": "dist/index.d.ts",
@@ -13,9 +13,9 @@
     },
     "devDependencies": {
         "@types/json-schema": "7.0.15",
-        "axios": "^1.7.4",
+        "axios": "^1.7.9",
         "json-schema": "0.4.0",
-        "type-fest": "4.25.0"
+        "type-fest": "4.32.0"
     },
     "license": "SEE LICENSE IN LICENSE FILE IN GIT REPOSITORY",
     "files": [

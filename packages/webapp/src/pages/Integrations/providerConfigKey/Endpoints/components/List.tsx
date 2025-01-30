@@ -1,4 +1,4 @@
-import type { GetIntegration, HTTP_VERB, NangoSyncConfig } from '@nangohq/types';
+import type { GetIntegration, NangoSyncConfig, NangoSyncEndpointV2 } from '@nangohq/types';
 import * as Table from '../../../../../components/ui/Table';
 import { HttpLabel } from '../../../../../components/HttpLabel';
 import { QuestionMarkCircledIcon } from '@radix-ui/react-icons';
@@ -11,7 +11,7 @@ import { Info } from '../../../../../components/Info';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/Tooltip';
 import { Prism } from '@mantine/prism';
 
-export type NangoSyncConfigWithEndpoint = NangoSyncConfig & { endpoint: { method: HTTP_VERB; path: string } };
+export type NangoSyncConfigWithEndpoint = NangoSyncConfig & { endpoint: NangoSyncEndpointV2 };
 export interface FlowGroup {
     name: string;
     flows: NangoSyncConfigWithEndpoint[];
@@ -33,7 +33,7 @@ export const EndpointsList: React.FC<{ integration: GetIntegration['Success']['d
                         There is no{' '}
                         <a
                             className="text-text-blue hover:text-text-light-blue"
-                            href="https://docs.nango.dev/understand/concepts/templates"
+                            href="https://docs.nango.dev/guides/pre-built-integrations/overview"
                             target="_blank"
                             rel="noreferrer"
                         >
@@ -70,11 +70,11 @@ export const EndpointsList: React.FC<{ integration: GetIntegration['Success']['d
                                 </Table.Header>
                                 <Table.Body>
                                     {flows.map((flow) => {
-                                        const usp = new URLSearchParams(flow.endpoint);
+                                        const usp = new URLSearchParams(flow.endpoint as unknown as Record<string, string>);
                                         return (
                                             <Link
                                                 to={`/${env}/integrations/${integration.integration.unique_key}/endpoint?${usp.toString()}`}
-                                                key={flow.name}
+                                                key={`${flow.name}-${flow.endpoint.path}`}
                                                 className="contents"
                                             >
                                                 <Table.Row>
@@ -144,7 +144,7 @@ export const EndpointsList: React.FC<{ integration: GetIntegration['Success']['d
                         </Table.Table>
                         <Info variant={'warning'} className="mt-4">
                             Your nango.yaml is outdated, you can upgrade by following{' '}
-                            <Link to="https://docs.nango.dev/customize/guides/advanced/migrate-integration-configuration" className="underline">
+                            <Link to="https://docs.nango.dev/guides/customize/migrate-integration-configuration" className="underline">
                                 this procedure
                             </Link>
                         </Info>
@@ -155,7 +155,7 @@ export const EndpointsList: React.FC<{ integration: GetIntegration['Success']['d
             <div className="text-text-light-gray flex gap-2 items-center">
                 <QuestionMarkCircledIcon />
                 Can&apos;t find the endpoint you need?{' '}
-                <a href="https://docs.nango.dev/customize/overview" className="underline">
+                <a href="https://docs.nango.dev/guides/custom-integrations/overview" className="underline">
                     Add your own
                 </a>
             </div>

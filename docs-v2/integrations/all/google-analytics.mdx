@@ -1,0 +1,49 @@
+---
+title: Google Analytics
+sidebarTitle: Google Analytics
+provider: google-analytics
+---
+
+import Overview from "/snippets/overview.mdx";
+import PreBuiltTooling from "/snippets/generated/google-analytics/PreBuiltTooling.mdx";
+
+import PreBuiltUseCases from "/snippets/generated/google-analytics/PreBuiltUseCases.mdx"
+
+<Overview />
+<PreBuiltTooling />
+<PreBuiltUseCases />
+
+## Access requirements
+| Pre-Requisites | Status | Comment|
+| - | - | - |
+| Paid dev account | ❓ |  |
+| Paid test account | ❓ |  |
+| Partnership | ❓ | |
+| App review | ❓ |  |
+| Security audit | ❓ | |
+
+
+## Setup guide
+
+_No setup guide yet._
+
+<Tip>Need help getting started? Get help in the [community](https://nango.dev/slack).</Tip>
+
+<Note>Contribute improvements to the setup guide by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/google-analytics.mdx)</Note>
+
+
+## Useful links
+
+-   [Google Analytics access token specs](https://cloud.google.com/iam/docs/reference/sts/rest/v1/TopLevel/token#response-body)
+-   [Google Analytics API docs](https://developers.google.com/analytics/policy)
+
+<Note>Contribute useful links by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/google-analytics.mdx)</Note>
+
+## API gotchas
+
+-   Google Analytics offers two main categories of APIs: the Admin API, used for managing properties within Google Analytics, and the Data API, which provides access to report data.
+-   To access the appropriate authorization scopes for each method, please refer to the Authorization Scopes section for the specific method. For example, see [Authorization scopes](https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1alpha/properties.audienceLists/get#authorization-scopes) for the Audience List method.
+-   While setting up the OAuth app, use the `https://www.googleapis.com/auth/analytics` scope for extended capabilities.
+-   To enable `Google Analytics` in the developer console for your project, please use the following link: https://console.cloud.google.com/flows/enableapi?apiid=analytics.googleapis.com
+
+<Note>Contribute API gotchas by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/google-analytics.mdx)</Note>

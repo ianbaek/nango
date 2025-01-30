@@ -13,7 +13,7 @@ import {
 import { errorNotificationService } from '../notification/error.service.js';
 import configService from '../config.service.js';
 import type { Connection, NangoConnection } from '../../models/Connection.js';
-import type { SyncDeploymentResult, Sync, ReportedSyncJobStatus, SyncCommand } from '../../models/Sync.js';
+import type { SyncWithConnectionId, ReportedSyncJobStatus, SyncCommand } from '../../models/Sync.js';
 import { SyncType, SyncStatus } from '../../models/Sync.js';
 import { NangoError } from '../../utils/error.js';
 import type { Config as ProviderConfig } from '../../models/Provider.js';
@@ -23,7 +23,7 @@ import { getLogger, stringifyError } from '@nangohq/utils';
 import environmentService from '../environment.service.js';
 import type { Orchestrator, RecordsServiceInterface } from '../../clients/orchestrator.js';
 import type { NangoConfig, NangoIntegration, NangoIntegrationData } from '../../models/NangoConfig.js';
-import type { DBEnvironment, IncomingFlowConfig } from '@nangohq/types';
+import type { DBEnvironment, IncomingFlowConfig, SyncDeploymentResult } from '@nangohq/types';
 
 // Should be in "logs" package but impossible thanks to CLI
 export const syncCommandToOperation = {
@@ -135,8 +135,8 @@ export class SyncManagerService {
             }
 
             return true;
-        } catch (e) {
-            await logCtx?.error(`Error starting syncs for ${syncName} with ${connections.length} connections`, { error: e });
+        } catch (err) {
+            await logCtx?.error(`Error starting syncs for ${syncName} with ${connections.length} connections`, { error: err });
 
             return false;
         }
@@ -311,6 +311,7 @@ export class SyncManagerService {
         providerConfigKey: string,
         syncNames: string[],
         orchestrator: Orchestrator,
+        recordsService: RecordsServiceInterface,
         connectionId?: string,
         includeJobStatus = false,
         optionalConnection?: Connection | null
@@ -333,12 +334,24 @@ export class SyncManagerService {
                     continue;
                 }
 
-                const reportedStatus = await this.syncStatus({ sync, environmentId, providerConfigKey, includeJobStatus, orchestrator });
+                const syncWithConnectionId: SyncWithConnectionId = {
+                    ...sync,
+                    connection_id: connection.connection_id
+                };
+
+                const reportedStatus = await this.syncStatus({
+                    sync: syncWithConnectionId,
+                    environmentId,
+                    providerConfigKey,
+                    includeJobStatus,
+                    orchestrator,
+                    recordsService
+                });
 
                 syncsWithStatus.push(reportedStatus);
             }
         } else {
-            const syncs =
+            const syncs: SyncWithConnectionId[] =
                 syncNames.length > 0
                     ? await getSyncsByProviderConfigAndSyncNames(environmentId, providerConfigKey, syncNames)
                     : await getSyncsByProviderConfigKey(environmentId, providerConfigKey);
@@ -348,7 +361,7 @@ export class SyncManagerService {
             }
 
             for (const sync of syncs) {
-                const reportedStatus = await this.syncStatus({ sync, environmentId, providerConfigKey, includeJobStatus, orchestrator });
+                const reportedStatus = await this.syncStatus({ sync, environmentId, providerConfigKey, includeJobStatus, orchestrator, recordsService });
 
                 syncsWithStatus.push(reportedStatus);
             }
@@ -417,13 +430,15 @@ export class SyncManagerService {
         environmentId,
         providerConfigKey,
         includeJobStatus,
-        orchestrator
+        orchestrator,
+        recordsService
     }: {
-        sync: Sync;
+        sync: SyncWithConnectionId;
         environmentId: number;
         providerConfigKey: string;
         includeJobStatus: boolean;
         orchestrator: Orchestrator;
+        recordsService: RecordsServiceInterface;
     }): Promise<ReportedSyncJobStatus> {
         const latestJob = await getLatestSyncJob(sync.id);
         const schedules = await orchestrator.searchSchedules([{ syncId: sync.id, environmentId }]);
@@ -432,15 +447,30 @@ export class SyncManagerService {
         }
         const schedule = schedules.value.get(sync.id);
         let frequency = sync.frequency;
+        const syncConfig = await getSyncConfigByParams(environmentId, sync.name, providerConfigKey);
         if (!frequency) {
-            const syncConfig = await getSyncConfigByParams(environmentId, sync.name, providerConfigKey);
             frequency = syncConfig?.runs || null;
         }
         if (!schedule) {
             throw new Error(`Schedule for sync ${sync.id} and environment ${environmentId} not found`);
         }
+
+        const countRes = await recordsService.getRecordCountsByModel({ connectionId: sync.nango_connection_id, environmentId });
+        if (countRes.isErr()) {
+            throw new Error(`Failed to get records count for sync ${sync.id} in environment ${environmentId}: ${stringifyError(countRes.error)}`);
+        }
+        const recordCount: Record<string, number> =
+            syncConfig?.models.reduce(
+                (acc, model) => {
+                    acc[model] = countRes.isOk() ? countRes.value[model]?.count || 0 : 0;
+                    return acc;
+                },
+                {} as Record<string, number>
+            ) || {};
+
         return {
             id: sync.id,
+            connection_id: sync.connection_id,
             type: latestJob?.type === SyncType.INCREMENTAL ? latestJob.type : 'INITIAL',
             finishedAt: latestJob?.updated_at,
             nextScheduledSyncAt: schedule.nextDueDate,
@@ -449,8 +479,9 @@ export class SyncManagerService {
             frequency,
             latestResult: latestJob?.result,
             latestExecutionStatus: latestJob?.status,
+            recordCount,
             ...(includeJobStatus ? { jobStatus: latestJob?.status as SyncStatus } : {})
-        } as ReportedSyncJobStatus;
+        };
     }
 }
 

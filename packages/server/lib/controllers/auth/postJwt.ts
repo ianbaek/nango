@@ -11,18 +11,21 @@ import {
     errorManager,
     ErrorSourceEnum,
     LogActionEnum,
-    getProvider
+    getProvider,
+    linkConnection
 } from '@nangohq/shared';
-import type { PostPublicJwtAuthorization, ProviderJwt } from '@nangohq/types';
+import type { MessageRowInsert, PostPublicJwtAuthorization, ProviderJwt } from '@nangohq/types';
 import type { LogContext } from '@nangohq/logs';
-import { defaultOperationExpiration, logContextGetter } from '@nangohq/logs';
+import { defaultOperationExpiration, flushLogsBuffer, logContextGetter } from '@nangohq/logs';
 import { hmacCheck } from '../../utils/hmac.js';
 import {
     connectionCreated as connectionCreatedHook,
     connectionCreationFailed as connectionCreationFailedHook,
     connectionTest as connectionTestHook
 } from '../../hooks/hooks.js';
-import { connectSessionTokenSchema, connectionIdSchema, providerConfigKeySchema } from '../../helpers/validation.js';
+import { connectionCredential, connectionIdSchema, providerConfigKeySchema } from '../../helpers/validation.js';
+import db from '@nangohq/database';
+import { isIntegrationAllowed } from '../../utils/auth.js';
 
 const bodyValidation = z
     .object({
@@ -42,12 +45,9 @@ const queryStringValidation = z
     .object({
         connection_id: connectionIdSchema.optional(),
         params: z.record(z.any()).optional(),
-        public_key: z.string().uuid().optional(),
-        connect_session_token: connectSessionTokenSchema.optional(),
-        user_scope: z.string().optional(),
-        hmac: z.string().optional()
+        user_scope: z.string().optional()
     })
-    .strict();
+    .and(connectionCredential);
 
 const paramValidation = z
     .object({
@@ -82,9 +82,17 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
 
     const { account, environment } = res.locals;
     const { privateKeyId = '', issuerId = '', privateKey } = val.data as PostPublicJwtAuthorization['Body'];
-    const { connection_id: receivedConnectionId, params, hmac }: PostPublicJwtAuthorization['Querystring'] = queryStringVal.data;
+    const queryString: PostPublicJwtAuthorization['Querystring'] = queryStringVal.data;
     const { providerConfigKey }: PostPublicJwtAuthorization['Params'] = paramVal.data;
-    const connectionConfig = params ? getConnectionConfig(params) : {};
+    const connectionConfig = queryString.params ? getConnectionConfig(queryString.params) : {};
+    let connectionId = queryString.connection_id || connectionService.generateConnectionId();
+    const hmac = 'hmac' in queryString ? queryString.hmac : undefined;
+    const isConnectSession = res.locals['authType'] === 'connectSession';
+
+    // if (isConnectSession && queryString.connection_id) {
+    //     errorRestrictConnectionId(res);
+    //     return;
+    // }
 
     let logCtx: LogContext | undefined;
 
@@ -99,14 +107,12 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
         );
         void analytics.track(AnalyticsTypes.PRE_JWT_AUTH, account.id);
 
-        await hmacCheck({
-            environment,
-            logCtx,
-            providerConfigKey,
-            connectionId: receivedConnectionId,
-            hmac,
-            res
-        });
+        if (!isConnectSession) {
+            const checked = await hmacCheck({ environment, logCtx, providerConfigKey, connectionId, hmac, res });
+            if (!checked) {
+                return;
+            }
+        }
 
         const config = await configService.getProviderConfig(providerConfigKey, environment.id);
         if (!config) {
@@ -131,6 +137,22 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
             return;
         }
 
+        if (!(await isIntegrationAllowed({ config, res, logCtx }))) {
+            return;
+        }
+
+        // Reconnect mechanism
+        if (isConnectSession && res.locals.connectSession.connectionId) {
+            const connection = await connectionService.getConnectionById(res.locals.connectSession.connectionId);
+            if (!connection) {
+                await logCtx.error('Invalid connection');
+                await logCtx.failed();
+                res.status(400).send({ error: { code: 'invalid_connection' } });
+                return;
+            }
+            connectionId = connection?.connection_id;
+        }
+
         await logCtx.enrichOperation({ integrationId: config.id!, integrationName: config.unique_key, providerName: config.provider });
 
         const { success, error, response: credentials } = connectionService.getJwtCredentials(provider as ProviderJwt, privateKey, privateKeyId, issuerId);
@@ -144,22 +166,11 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
             return;
         }
 
-        await logCtx.info('JWT connection creation was successful');
-        await logCtx.success();
-
-        const connectionId = receivedConnectionId || connectionService.generateConnectionId();
-
-        const connectionResponse = await connectionTestHook(
-            config.provider,
-            provider,
-            credentials,
-            connectionId,
-            providerConfigKey,
-            environment.id,
-            connectionConfig
-        );
-
+        const connectionResponse = await connectionTestHook({ config, connectionConfig, connectionId, credentials, provider });
         if (connectionResponse.isErr()) {
+            if ('logs' in connectionResponse.error.payload) {
+                await flushLogsBuffer(connectionResponse.error.payload['logs'] as MessageRowInsert[], logCtx);
+            }
             await logCtx.error('Provided credentials are invalid', { provider: config.provider });
             await logCtx.failed();
 
@@ -168,10 +179,9 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
             return;
         }
 
-        await logCtx.info('JWT connection creation was successful');
-        await logCtx.success();
+        await flushLogsBuffer(connectionResponse.value.logs, logCtx);
 
-        const [updatedConnection] = await connectionService.upsertJwtConnection({
+        const [updatedConnection] = await connectionService.upsertAuthConnection({
             connectionId,
             providerConfigKey,
             credentials,
@@ -181,23 +191,36 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
             environment,
             account
         });
-
-        if (updatedConnection) {
-            await logCtx.enrichOperation({ connectionId: updatedConnection.connection.id!, connectionName: updatedConnection.connection.connection_id });
-            void connectionCreatedHook(
-                {
-                    connection: updatedConnection.connection,
-                    environment,
-                    account,
-                    auth_mode: 'JWT',
-                    operation: updatedConnection.operation
-                },
-                config.provider,
-                logContextGetter,
-                undefined,
-                logCtx
-            );
+        if (!updatedConnection) {
+            res.status(500).send({ error: { code: 'server_error', message: 'failed to create connection' } });
+            await logCtx.error('Failed to create connection');
+            await logCtx.failed();
+            return;
         }
+
+        if (isConnectSession) {
+            const session = res.locals.connectSession;
+            await linkConnection(db.knex, { endUserId: session.endUserId, connection: updatedConnection.connection });
+        }
+
+        await logCtx.enrichOperation({ connectionId: updatedConnection.connection.id!, connectionName: updatedConnection.connection.connection_id });
+        await logCtx.info('JWT connection creation was successful');
+        await logCtx.success();
+
+        void connectionCreatedHook(
+            {
+                connection: updatedConnection.connection,
+                environment,
+                account,
+                auth_mode: 'JWT',
+                operation: updatedConnection.operation,
+                endUser: isConnectSession ? res.locals['endUser'] : undefined
+            },
+            config.provider,
+            logContextGetter,
+            undefined,
+            logCtx
+        );
 
         res.status(200).send({ providerConfigKey, connectionId });
     } catch (err) {
@@ -205,7 +228,7 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
 
         void connectionCreationFailedHook(
             {
-                connection: { connection_id: receivedConnectionId!, provider_config_key: providerConfigKey },
+                connection: { connection_id: connectionId, provider_config_key: providerConfigKey },
                 environment,
                 account,
                 auth_mode: 'JWT',
@@ -227,10 +250,7 @@ export const postPublicJwtAuthorization = asyncWrapper<PostPublicJwtAuthorizatio
             source: ErrorSourceEnum.PLATFORM,
             operation: LogActionEnum.AUTH,
             environmentId: environment.id,
-            metadata: {
-                providerConfigKey,
-                connectionId: receivedConnectionId
-            }
+            metadata: { providerConfigKey, connectionId }
         });
 
         next(err);

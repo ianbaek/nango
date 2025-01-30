@@ -25,8 +25,8 @@ export type * from './team/db.js';
 export type * from './providers/api.js';
 export type * from './proxy/api.js';
 
-export type * from './environment/db.js';
-export type * from './scripts/post-connection/db.js';
+export type * from './scripts/on-events/db.js';
+export type * from './scripts/on-events/api.js';
 export type * from './scripts/syncs/api.js';
 export type * from './slackNotifications/db.js';
 export type * from './notification/active-logs/db.js';
@@ -38,17 +38,28 @@ export type * from './auth/api.js';
 export type * from './auth/db.js';
 export type * from './auth/http.api.js';
 export type * from './deploy/api.js';
+export type * from './deploy/index.js';
 export type * from './deploy/incomingFlow.js';
+export type * from './endpoints/db.js';
 export type * from './connect/api.js';
 export type * from './connect/session.js';
 export type * from './endUser/index.js';
+export type * from './runner/index.js';
+export type * from './runner/sdk.js';
 
 export type * from './nangoYaml/index.js';
 
 export type * from './environment/db.js';
+export type * from './environment/api/index.js';
 export type * from './environment/api/webhook.js';
+export type * from './environment/api/otlp.js';
+export type * from './environment/variable/index.js';
 export type * from './webhooks/api.js';
+export type * from './webhooks/http.api.js';
 export type * from './flow/http.api.js';
 
 export type * from './utils.js';
 export type * from './web/env.js';
+
+export type * from './fleet/api.js';
+export type * from './fleet/index.js';

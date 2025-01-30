@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import type { NangoConnection, HTTP_VERB, Connection } from '@nangohq/shared';
+import type { NangoConnection, HTTP_METHOD, Connection, Sync } from '@nangohq/shared';
 import tracer from 'dd-trace';
 import type { Span } from 'dd-trace';
 import {
@@ -84,8 +84,8 @@ class SyncController {
             }
             await trackFetch(connection.id as number);
             res.send(result.value);
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -118,11 +118,24 @@ class SyncController {
                 return;
             }
 
-            const syncs = await getSyncs(connection, orchestrator);
-
+            const rawSyncs = await getSyncs(connection, orchestrator);
+            const syncs = await this.addRecordCount(rawSyncs, connection.id!, environment.id);
             res.send(syncs);
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    private async addRecordCount(syncs: (Sync & { models: string[] })[], connectionId: number, environmentId: number) {
+        const byModel = await recordsService.getRecordCountsByModel({ connectionId, environmentId });
+
+        if (byModel.isOk()) {
+            return syncs.map((sync) => ({
+                ...sync,
+                record_count: Object.fromEntries(sync.models.map((model) => [model, byModel.value[model]?.count ?? 0]))
+            }));
+        } else {
+            return syncs.map((sync) => ({ ...sync, record_count: null }));
         }
     }
 
@@ -134,8 +147,8 @@ class SyncController {
             const flows = flowService.getAllAvailableFlows();
 
             res.send({ syncs, flows });
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -188,9 +201,9 @@ class SyncController {
                 return;
             }
 
-            res.sendStatus(200);
-        } catch (e) {
-            next(e);
+            res.status(200).send({ success: true });
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -218,7 +231,7 @@ class SyncController {
                 return;
             }
 
-            const { action, model } = await getActionOrModelByEndpoint(connection as NangoConnection, req.method as HTTP_VERB, path);
+            const { action, model } = await getActionOrModelByEndpoint(connection as NangoConnection, req.method as HTTP_METHOD, path);
             if (action) {
                 const input = req.body || req.params[1];
                 req.body = {};
@@ -231,8 +244,8 @@ class SyncController {
             } else {
                 res.status(404).send({ message: `Unknown endpoint '${req.method} ${path}'` });
             }
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -302,7 +315,7 @@ class SyncController {
                     environment,
                     integration: { id: provider.id!, name: connection.provider_config_key, provider: provider.provider },
                     connection: { id: connection.id!, name: connection.connection_id },
-                    syncConfig: { id: syncConfig.id!, name: syncConfig.sync_name },
+                    syncConfig: { id: syncConfig.id, name: syncConfig.sync_name },
                     meta: truncateJson({ input })
                 }
             );
@@ -324,7 +337,20 @@ class SyncController {
                 span.setTag('nango.error', actionResponse.error);
                 await logCtx.failed();
 
-                errorManager.errResFromNangoErr(res, actionResponse.error);
+                if (actionResponse.error.type === 'script_http_error') {
+                    res.status(424).json({
+                        error: {
+                            payload: actionResponse.error.payload,
+                            code: actionResponse.error.type,
+                            ...(actionResponse.error.additional_properties && 'upstream_response' in actionResponse.error.additional_properties
+                                ? { upstream: actionResponse.error.additional_properties['upstream_response'] }
+                                : {})
+                        }
+                    });
+                } else {
+                    errorManager.errResFromNangoErr(res, actionResponse.error);
+                }
+
                 span.finish();
                 return;
             }
@@ -368,8 +394,8 @@ class SyncController {
             const providerConfigKey = await getProviderConfigBySyncAndAccount(syncName as string, environmentId);
 
             res.send(providerConfigKey);
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -409,9 +435,9 @@ class SyncController {
                 initiator: 'API call'
             });
 
-            res.sendStatus(200);
-        } catch (e) {
-            next(e);
+            res.status(200).send({ success: true });
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -451,9 +477,9 @@ class SyncController {
                 initiator: 'API call'
             });
 
-            res.sendStatus(200);
-        } catch (e) {
-            next(e);
+            res.status(200).send({ success: true });
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -510,6 +536,7 @@ class SyncController {
                 provider_config_key as string,
                 syncNames,
                 orchestrator,
+                recordsService,
                 connection_id as string,
                 false,
                 connection
@@ -521,8 +548,8 @@ class SyncController {
             }
 
             res.send({ syncs: syncsWithStatus });
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -532,7 +559,7 @@ class SyncController {
         try {
             const { account, environment } = res.locals;
 
-            const { schedule_id, command, nango_connection_id, sync_id, sync_name, provider } = req.body;
+            const { schedule_id, command, nango_connection_id, sync_id, sync_name, provider, delete_records } = req.body;
             const connection = await connectionService.getConnectionById(nango_connection_id);
             if (!connection) {
                 res.status(404).json({ error: { code: 'not_found' } });
@@ -558,7 +585,7 @@ class SyncController {
                     environment,
                     integration: { id: config.id!, name: config.unique_key, provider: config.provider },
                     connection: { id: connection.id!, name: connection.connection_id },
-                    syncConfig: { id: syncConfig.id!, name: syncConfig.sync_name }
+                    syncConfig: { id: syncConfig.id, name: syncConfig.sync_name }
                 }
             );
 
@@ -566,7 +593,7 @@ class SyncController {
                 await logCtx.error('Unauthorized access to run the command');
                 await logCtx.failed();
 
-                res.sendStatus(401);
+                res.status(401).json({ error: { code: 'forbidden' } });
                 return;
             }
 
@@ -577,11 +604,12 @@ class SyncController {
                 environmentId: environment.id,
                 logCtx,
                 recordsService,
-                initiator: 'UI'
+                initiator: 'UI',
+                delete_records
             });
 
             if (result.isErr()) {
-                errorManager.handleGenericError(result.error, req, res, tracer);
+                errorManager.handleGenericError(result.error, req, res);
                 await logCtx.failed();
                 return;
             }
@@ -615,7 +643,7 @@ class SyncController {
                 schedule_id
             });
 
-            res.sendStatus(200);
+            res.status(200).json({ data: { success: true } });
         } catch (err) {
             if (logCtx) {
                 await logCtx.error('Failed to sync command', { error: err });
@@ -644,8 +672,8 @@ class SyncController {
             const attributes = await getAttributes(provider_config_key as string, sync_name as string);
 
             res.status(200).send(attributes);
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -685,8 +713,8 @@ class SyncController {
             await syncManager.softDeleteSync(syncId, environmentId, orchestrator);
 
             res.sendStatus(204);
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 
@@ -770,8 +798,8 @@ class SyncController {
                 return;
             }
             res.status(200).send({ frequency: newFrequency });
-        } catch (e) {
-            next(e);
+        } catch (err) {
+            next(err);
         }
     }
 }

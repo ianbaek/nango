@@ -1,7 +1,6 @@
-FROM node:20.12.2-slim
+FROM node:20.18.1-bookworm-slim
 
 ENV SERVER_RUN_MODE=DOCKERIZED
-ENV NANGO_DB_MIGRATION_FOLDER=./packages/database/lib/migrations
 
 RUN apt-get update \
     && apt-get install -y ca-certificates \
@@ -12,6 +11,7 @@ WORKDIR /usr/nango-server/src
 COPY packages/server/ packages/server/
 COPY package*.json ./
 COPY packages/webapp/build/ packages/webapp/build/
+COPY packages/connect-ui/ packages/connect-ui/
 COPY packages/shared/ packages/shared/
 COPY packages/utils/ packages/utils/
 COPY packages/kvstore/ packages/kvstore/
@@ -24,8 +24,11 @@ COPY packages/records/ packages/records/
 COPY packages/scheduler/ packages/scheduler/
 COPY packages/orchestrator/ packages/orchestrator/
 COPY packages/keystore/ packages/keystore/
+COPY packages/fleet/ packages/fleet/
+COPY packages/providers/ packages/providers/
+COPY packages/runner-sdk/ packages/runner-sdk/
 
 RUN npm pkg delete scripts.prepare
 RUN npm ci --omit=dev
 
-CMD [ "node", "packages/server/dist/server.js" ]
+CMD ["packages/server/entrypoint.sh"]

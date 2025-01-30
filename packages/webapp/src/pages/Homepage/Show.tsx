@@ -5,6 +5,7 @@ import DashboardLayout from '../../layout/DashboardLayout';
 import { InsightChart } from './components/InsightChart';
 import { useMeta } from '../../hooks/useMeta';
 import { globalEnv } from '../../utils/env';
+import { Helmet } from 'react-helmet';
 
 export const Homepage: React.FC = () => {
     const { meta } = useMeta();
@@ -17,6 +18,9 @@ export const Homepage: React.FC = () => {
     if (!globalEnv.features.logs) {
         return (
             <DashboardLayout selectedItem={LeftNavBarItems.Homepage}>
+                <Helmet>
+                    <title>Homepage - Nango</title>
+                </Helmet>
                 <div className="flex justify-between items-center">
                     <div className="flex flex-col gap-2">
                         <h2 className="text-3xl font-semibold text-white flex gap-4 items-center">Hello, {me.name}!</h2>
@@ -27,7 +31,7 @@ export const Homepage: React.FC = () => {
                     <h2 className="text-xl text-center">Logs not configured</h2>
                     <div className="text-sm text-gray-400">
                         Follow{' '}
-                        <Link to="https://docs.nango.dev/host/self-host/self-hosting-instructions#logs" className="text-blue-400">
+                        <Link to="https://docs.nango.dev/guides/self-hosting/free-self-hosting/overview#logs" className="text-blue-400">
                             these instructions
                         </Link>{' '}
                         to configure logs and enable execution metrics in your dashboard.
@@ -39,24 +43,29 @@ export const Homepage: React.FC = () => {
 
     return (
         <DashboardLayout selectedItem={LeftNavBarItems.Homepage}>
+            <Helmet>
+                <title>Homepage - Nango</title>
+            </Helmet>
             <div className="flex justify-between items-center">
                 <div className="flex flex-col gap-2">
                     <h2 className="text-3xl font-semibold text-white flex gap-4 items-center">Hello, {me.name}!</h2>
 
                     <div className="text-text-light-gray text-sm">Here’s your recent activity on Nango.</div>
                 </div>
-                <div className="text-white text-sm">Last 14 days</div>
+                <div className="text-white text-sm">
+                    Last 14 days <code className="font-code text-xs text-dark-500">(UTC)</code>
+                </div>
             </div>
             <div className="grid gap-8 grid-cols-[repeat(auto-fill,minmax(300px,470px))] mt-8">
                 {globalEnv.features.scripts && (
                     <InsightChart
-                        title="Sync"
-                        type="sync"
-                        desc="Sync executions"
+                        title="Sync Executions"
+                        type="sync:run"
+                        desc=""
                         help={
                             <div>
                                 No sync executions in the last 14 days.{' '}
-                                <Link to="https://docs.nango.dev/integrate/guides/sync-data-from-an-api" className="underline text-white">
+                                <Link to="https://docs.nango.dev/guides/syncs/use-a-sync" className="underline text-white">
                                     Learn more
                                 </Link>
                             </div>
@@ -65,13 +74,13 @@ export const Homepage: React.FC = () => {
                 )}
                 {globalEnv.features.scripts && (
                     <InsightChart
-                        title="Action"
+                        title="Action Executions"
                         type="action"
-                        desc="Action executions"
+                        desc=""
                         help={
                             <div>
                                 No action executions in the last 14 days.{' '}
-                                <Link to="https://docs.nango.dev/integrate/guides/perform-workflows-with-an-api" className="underline text-white">
+                                <Link to="https://docs.nango.dev/guides/actions/use-an-action" className="underline text-white">
                                     Learn more
                                 </Link>
                             </div>
@@ -79,13 +88,13 @@ export const Homepage: React.FC = () => {
                     />
                 )}
                 <InsightChart
-                    title="Proxy"
+                    title="Proxy Requests"
                     type="proxy"
-                    desc="Proxy requests"
+                    desc=""
                     help={
                         <div>
-                            No proxy calls in the last 14 days.{' '}
-                            <Link to="https://docs.nango.dev/integrate/guides/proxy-requests-to-an-api" className="underline text-white">
+                            No proxy requests sent in the last 14 days.{' '}
+                            <Link to="https://docs.nango.dev/guides/individual-requests" className="underline text-white">
                                 Learn more
                             </Link>
                         </div>
@@ -93,13 +102,13 @@ export const Homepage: React.FC = () => {
                 />
                 {globalEnv.features.scripts && (
                     <InsightChart
-                        title="Webhook"
-                        type="webhook_external"
-                        desc="External webhooks received"
+                        title="Webhook Executions"
+                        type="webhook:incoming"
+                        desc=""
                         help={
                             <div>
-                                No external webhooks received in the last 14 days.{' '}
-                                <Link to="https://docs.nango.dev/integrate/guides/receive-webhooks-from-an-api" className="underline text-white">
+                                No webhook executions in the last 14 days.{' '}
+                                <Link to="https://docs.nango.dev/guides/webhooks/webhooks-from-apis" className="underline text-white">
                                     Learn more
                                 </Link>
                             </div>

@@ -1,4 +1,4 @@
-import Button from './ui/button/Button';
+import { Button } from './ui/button/Button';
 import { useMemo, useState } from 'react';
 import { CrossCircledIcon } from '@radix-ui/react-icons';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/Popover';
@@ -50,7 +50,7 @@ export const MultiSelect: React.FC<MultiSelectArgs<any>> = ({ label, options, se
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <Button variant="zombieGray" size={'xs'} className={cn('text-text-light-gray', isDirty && 'text-white')}>
+                <Button variant="zombieGray" size={'sm'} className={cn('text-text-light-gray', isDirty && 'text-white')}>
                     {label}
                     {isDirty && (
                         <button

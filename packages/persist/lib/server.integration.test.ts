@@ -3,9 +3,19 @@ import { server } from './server.js';
 import fetch from 'node-fetch';
 import type { AuthCredentials, Sync, SyncConfig, Job as SyncJob } from '@nangohq/shared';
 import db, { multipleMigrations } from '@nangohq/database';
-import { environmentService, connectionService, createSync, createSyncJob, SyncType, SyncStatus, accountService, configService } from '@nangohq/shared';
+import {
+    environmentService,
+    connectionService,
+    createSync,
+    createSyncJob,
+    SyncType,
+    SyncStatus,
+    accountService,
+    configService,
+    getProvider
+} from '@nangohq/shared';
 import { logContextGetter, migrateLogsMapping } from '@nangohq/logs';
-import { migrate as migrateRecords } from '@nangohq/records';
+import { migrate as migrateRecords, records } from '@nangohq/records';
 import type { DBEnvironment, DBTeam } from '@nangohq/types';
 
 const mockSecretKey = 'secret-key';
@@ -135,7 +145,7 @@ describe('Persist API', () => {
                     }
                 }
             );
-            expect(response.status).toEqual(204);
+            expect(response.status).toEqual(200);
         });
     });
 
@@ -162,7 +172,7 @@ describe('Persist API', () => {
                 }
             }
         );
-        expect(response.status).toEqual(204);
+        expect(response.status).toEqual(200);
     });
 
     it('should update records ', async () => {
@@ -188,7 +198,7 @@ describe('Persist API', () => {
                 }
             }
         );
-        expect(response.status).toEqual(204);
+        expect(response.status).toEqual(200);
     });
 
     it('should fail if passing incorrect authorization header ', async () => {
@@ -243,6 +253,108 @@ describe('Persist API', () => {
             }
         });
     });
+
+    describe('getCursor', () => {
+        it('should return an empty response if no records', async () => {
+            const model = 'does-not-exist';
+            const cursorUrl = `${serverUrl}/environment/${seed.env.id}/connection/${seed.connection.id}/cursor?model=${model}&offset=last`;
+            const response = await fetch(cursorUrl, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${mockSecretKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            expect(response.status).toEqual(200);
+            expect(await response.json()).toStrictEqual({});
+        });
+        it('should return first cursor', async () => {
+            const model = 'ModelFirstCursor';
+
+            // Save records
+            await fetch(`${serverUrl}/environment/${seed.env.id}/connection/${seed.connection.id}/sync/${seed.sync.id}/job/${seed.syncJob.id}/records`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    model,
+                    records: [
+                        { id: 1, name: 'r1' },
+                        { id: 2, name: 'r2' },
+                        { id: 3, name: 'r3' }
+                    ],
+                    providerConfigKey: seed.connection.provider_config_key,
+                    connectionId: seed.connection.connection_id,
+                    activityLogId: seed.activityLogId
+                }),
+                headers: {
+                    Authorization: `Bearer ${mockSecretKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            const allRecords = (
+                await records.getRecords({
+                    connectionId: seed.connection.id!,
+                    model
+                })
+            ).unwrap();
+            const firstRecord = allRecords.records[0];
+
+            const cursorUrl = `${serverUrl}/environment/${seed.env.id}/connection/${seed.connection.id}/cursor?model=${model}&offset=first`;
+            const response = await fetch(cursorUrl, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${mockSecretKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            expect(response.status).toEqual(200);
+            expect(await response.json()).toStrictEqual({
+                cursor: firstRecord?._nango_metadata.cursor
+            });
+        });
+        it('should return last cursor', async () => {
+            const model = 'ModelLastCursor';
+
+            // Save records
+            await fetch(`${serverUrl}/environment/${seed.env.id}/connection/${seed.connection.id}/sync/${seed.sync.id}/job/${seed.syncJob.id}/records`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    model,
+                    records: [
+                        { id: 1, name: 'r1' },
+                        { id: 2, name: 'r2' },
+                        { id: 3, name: 'r3' }
+                    ],
+                    providerConfigKey: seed.connection.provider_config_key,
+                    connectionId: seed.connection.connection_id,
+                    activityLogId: seed.activityLogId
+                }),
+                headers: {
+                    Authorization: `Bearer ${mockSecretKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            const allRecords = (
+                await records.getRecords({
+                    connectionId: seed.connection.id!,
+                    model
+                })
+            ).unwrap();
+            const lastRecord = allRecords.records[allRecords.records.length - 1];
+
+            const cursorUrl = `${serverUrl}/environment/${seed.env.id}/connection/${seed.connection.id}/cursor?model=${model}&offset=last`;
+            const response = await fetch(cursorUrl, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${mockSecretKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            expect(response.status).toEqual(200);
+            expect(await response.json()).toStrictEqual({
+                cursor: lastRecord?._nango_metadata.cursor
+            });
+        });
+    });
 });
 
 const initDb = async () => {
@@ -255,15 +367,22 @@ const initDb = async () => {
         { account: { id: env.account_id, name: '' }, environment: { id: env.id, name: env.name } }
     );
 
-    const providerConfig = await configService.createProviderConfig({
-        unique_key: 'provider-test',
-        provider: 'google',
-        environment_id: env.id,
-        oauth_client_id: '',
-        oauth_client_secret: '',
-        created_at: now,
-        updated_at: now
-    });
+    const googleProvider = getProvider('google');
+    if (!googleProvider) {
+        throw new Error('google provider not found');
+    }
+
+    const providerConfig = await configService.createProviderConfig(
+        {
+            unique_key: 'provider-test',
+            provider: 'google',
+            environment_id: env.id,
+            oauth_client_id: '',
+            oauth_client_secret: '',
+            missing_fields: []
+        },
+        googleProvider
+    );
     if (!providerConfig) throw new Error('Provider config not created');
 
     const [syncConfig] = await db.knex

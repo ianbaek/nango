@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, CheckCircledIcon, GearIcon, Pencil1Icon, QuestionMarkCircledIcon } from '@radix-ui/react-icons';
-import Button from '../../../../../components/ui/button/Button';
+import { Button } from '../../../../../components/ui/button/Button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger } from '../../../../../components/ui/Dialog';
 import { Drawer, DrawerContent, DrawerTrigger, DrawerClose } from '../../../../../components/ui/Drawer';
 import { InfoBloc } from '../../../../../components/InfoBloc';
@@ -141,7 +141,7 @@ export const ScriptSettings: React.FC<{
                     <div className="text-s text-text-light-gray pt-7">
                         Nango endpoints are powered by integration scripts. Some of the following configurations can only be changed by modifying this
                         underlying script. If the source is a template, you will need to extend it to change certain configurations (
-                        <Link to="https://docs.nango.dev/customize/guides/extend-an-integration-template" className="underline">
+                        <Link to="https://docs.nango.dev/guides/custom-integrations/extend-a-pre-built-integration" className="underline">
                             guide
                         </Link>
                         ).

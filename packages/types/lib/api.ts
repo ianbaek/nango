@@ -1,9 +1,9 @@
-export interface ApiError<TCode extends string, TErrors = any, P = unknown> {
+export interface ApiError<TCode extends string, TErrors = any, TPayload = unknown> {
     error: {
         code: TCode;
         message?: string | undefined;
         errors?: TErrors;
-        payload?: P;
+        payload?: TPayload;
     };
 }
 export interface ValidationError {
@@ -14,6 +14,7 @@ export interface ValidationError {
 
 export type ResDefaultErrors =
     | ApiError<'not_found'>
+    | ApiError<'conflict'>
     | ApiError<'invalid_query_params', ValidationError[]>
     | ApiError<'invalid_body', ValidationError[]>
     | ApiError<'invalid_uri_params', ValidationError[]>
@@ -24,7 +25,10 @@ export type ResDefaultErrors =
     | ApiError<'missing_auth_header'>
     | ApiError<'malformed_auth_header'>
     | ApiError<'unknown_account'>
-    | ApiError<'unknown_connect_session_token'>;
+    | ApiError<'unknown_connect_session_token'>
+    | ApiError<'invalid_cli_version'>
+    | ApiError<'invalid_permissions'>
+    | ApiError<'invalid_connect_session_token_format'>;
 
 export type EndpointMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 /**

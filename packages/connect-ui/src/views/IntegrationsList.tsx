@@ -10,7 +10,7 @@ import type { ApiPublicIntegration, GetPublicProvider } from '@nangohq/types';
 import { ErrorFallback } from '@/components/ErrorFallback';
 import { LoadingView } from '@/components/LoadingView';
 import { Button } from '@/components/ui/button';
-import { getIntegrations, getProvider } from '@/lib/api';
+import { APIError, getIntegrations, getProvider } from '@/lib/api';
 import { triggerClose } from '@/lib/events';
 import { useGlobal } from '@/lib/store';
 import NoIntegrationSVG from '@/svg/nointegrations.svg?react';
@@ -44,6 +44,7 @@ const Integrations: React.FC = () => {
             await navigate({ to: '/go' });
         }
         if (isSingleIntegration) {
+            store.setIsSingleIntegration(true);
             void call();
         }
     }, [data, store.session]);
@@ -72,18 +73,18 @@ const Integrations: React.FC = () => {
 
     return (
         <>
-            <header className="flex flex-col gap-4 p-10 ">
-                <div className="flex justify-end">
+            <header className="relative m-10">
+                <div className="absolute top-0 left-0 w-full flex justify-end">
                     <Button size={'icon'} title="Close UI" variant={'transparent'} onClick={() => triggerClose()}>
                         <IconX stroke={1} />
                     </Button>
                 </div>
-                <div className="flex flex-col gap-5 text-center">
+                <div className="flex flex-col gap-5 text-center pt-10">
                     <h1 className="font-semibold text-xl text-dark-800">Select Integration</h1>
                     <p className="text-dark-500">Please select an API integration from the list below.</p>
                 </div>
             </header>
-            <main className="h-full overflow-auto m-9 mt-1 p-1">
+            <main className="h-full overflow-auto m-9 mt-1 p-1 ">
                 <div className="flex flex-col">
                     {data.data.map((integration) => {
                         return <Integration key={integration.unique_key} integration={integration} />;
@@ -108,7 +109,13 @@ const Integration: React.FC<{ integration: ApiPublicIntegration }> = ({ integrat
         try {
             provider = await getProvider({ provider: integration.provider });
         } catch (err) {
-            console.log(err);
+            if (err instanceof APIError) {
+                setError(() => {
+                    // Trick to catch async error in the global state
+                    throw err;
+                });
+                return;
+            }
             setError('An error occurred while loading configuration');
             setLoading(false);
             return;

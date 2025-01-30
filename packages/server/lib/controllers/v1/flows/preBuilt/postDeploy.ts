@@ -5,7 +5,7 @@ import { requireEmptyQuery, zodErrorToHTTP } from '@nangohq/utils';
 import { logContextGetter } from '@nangohq/logs';
 import { configService, connectionService, deployPreBuilt, flowService, syncManager } from '@nangohq/shared';
 import { getOrchestrator } from '../../../../utils/utils.js';
-import { flowConfig } from '../../../sync/deploy/postConfirmation.js';
+import { flowConfig } from '../../../sync/deploy/validation.js';
 import { providerConfigKeySchema, providerSchema, scriptNameSchema } from '../../../../helpers/validation.js';
 
 const validation = z
@@ -39,7 +39,7 @@ export const postPreBuiltDeploy = asyncWrapper<PostPreBuiltDeploy>(async (req, r
     const { environment, account } = res.locals;
     const environmentId = environment.id;
 
-    const config = await configService.getConfigIdByProviderConfigKey(body.providerConfigKey, environmentId);
+    const config = await configService.getIdByProviderConfigKey(environmentId, body.providerConfigKey);
     if (!config) {
         res.status(400).send({ error: { code: 'unknown_provider' } });
         return;

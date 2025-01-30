@@ -52,7 +52,7 @@ async function execute(createdConnection: RecentlyCreatedConnection, providerNam
 
                 return connection as Connection;
             },
-            proxy: async ({ method, endpoint, data, headers, params }: UserProvidedProxyConfiguration) => {
+            proxy: async ({ method, endpoint, data, headers, params, baseUrlOverride }: UserProvidedProxyConfiguration) => {
                 const finalExternalConfig: UserProvidedProxyConfiguration = {
                     ...externalConfig,
                     method: method || externalConfig.method || 'GET',
@@ -60,9 +60,15 @@ async function execute(createdConnection: RecentlyCreatedConnection, providerNam
                     headers: headers || {},
                     params: params || {}
                 };
+
+                if (baseUrlOverride) {
+                    finalExternalConfig.baseUrlOverride = baseUrlOverride;
+                }
+
                 if (data) {
                     finalExternalConfig.data = data;
                 }
+
                 const { response } = await proxyService.route(finalExternalConfig, internalConfig);
 
                 if (response instanceof Error) {
@@ -98,22 +104,22 @@ async function execute(createdConnection: RecentlyCreatedConnection, providerNam
                 await handler(internalNango);
                 await logCtx.info('Success');
                 await logCtx.success();
-            } catch (e) {
+            } catch (err) {
                 const errorDetails =
-                    e instanceof Error
+                    err instanceof Error
                         ? {
-                              message: e.message || 'Unknown error',
-                              name: e.name || 'Error',
-                              stack: e.stack || 'No stack trace'
+                              message: err.message || 'Unknown error',
+                              name: err.name || 'Error',
+                              stack: err.stack || 'No stack trace'
                           }
                         : 'Unknown error';
 
                 const errorString = JSON.stringify(errorDetails);
 
-                await logCtx.error('Post connection script failed', { error: e });
+                await logCtx.error('Post connection script failed', { error: err });
                 await logCtx.failed();
 
-                await telemetry.log(LogTypes.POST_CONNECTION_SCRIPT_FAILURE, `Post connection script failed, ${errorString}`, LogActionEnum.AUTH, {
+                await telemetry.log(LogTypes.POST_CONNECTION_FAILURE, `Post connection script failed, ${errorString}`, LogActionEnum.AUTH, {
                     environmentId: String(environment.id),
                     connectionId: upsertedConnection.connection_id,
                     providerConfigKey: upsertedConnection.provider_config_key,
@@ -123,7 +129,7 @@ async function execute(createdConnection: RecentlyCreatedConnection, providerNam
             }
         }
     } catch (err) {
-        await telemetry.log(LogTypes.POST_CONNECTION_SCRIPT_FAILURE, `Post connection manager failed, ${stringifyError(err)}`, LogActionEnum.AUTH, {
+        await telemetry.log(LogTypes.POST_CONNECTION_FAILURE, `Post connection manager failed, ${stringifyError(err)}`, LogActionEnum.AUTH, {
             environmentId: String(environment.id),
             connectionId: upsertedConnection.connection_id,
             providerConfigKey: upsertedConnection.provider_config_key,

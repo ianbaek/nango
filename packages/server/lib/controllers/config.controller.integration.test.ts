@@ -1,18 +1,18 @@
 import { expect, describe, it, vi, beforeAll } from 'vitest';
 import type { Request, NextFunction } from 'express';
-import type { User } from '@nangohq/shared';
 import { NangoError } from '@nangohq/shared';
 import db, { multipleMigrations } from '@nangohq/database';
 import configController from './config.controller';
 import type { RequestLocals } from '../utils/express.js';
-import type { DBTeam, DBEnvironment, ConnectSession } from '@nangohq/types';
+import type { DBTeam, DBEnvironment, ConnectSession, DBUser, EndUser } from '@nangohq/types';
 
 const locals: Required<RequestLocals> = {
     authType: 'secretKey',
     account: { id: 0 } as DBTeam,
     environment: { id: 1 } as DBEnvironment,
-    user: { id: 0 } as User,
-    connectSession: { id: 0 } as ConnectSession
+    user: { id: 0 } as DBUser,
+    connectSession: { id: 0 } as ConnectSession,
+    endUser: { id: 0 } as EndUser
 };
 /**
  * LIST: ✅

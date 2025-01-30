@@ -5,7 +5,7 @@ import { InfoBloc } from '../../../../../components/InfoBloc';
 import SecretTextarea from '../../../../../components/ui/input/SecretTextArea';
 import { CopyButton } from '../../../../../components/ui/button/CopyButton';
 import { DeleteIntegrationButton } from './Delete';
-import Button from '../../../../../components/ui/button/Button';
+import { Button } from '../../../../../components/ui/button/Button';
 import { useState } from 'react';
 import { useStore } from '../../../../../store';
 import { apiPatchIntegration } from '../../../../../hooks/useIntegration';
@@ -40,7 +40,7 @@ export const SettingsApp: React.FC<{ data: GetIntegration['Success']['data']; en
     };
 
     return (
-        <div className="mt-10 flex gap-10">
+        <div className="mt-10 flex flex-col gap-10">
             {environment.callback_url && (
                 <InfoBloc
                     title="Setup URL"
@@ -62,7 +62,7 @@ export const SettingsApp: React.FC<{ data: GetIntegration['Success']['data']; en
                         required
                         minLength={1}
                         variant={'flat'}
-                        after={<CopyButton text={integration.oauth_client_id} />}
+                        after={<CopyButton text={integration.oauth_client_id || ''} />}
                     />
                 </InfoBloc>
                 <InfoBloc title="App Public Link">

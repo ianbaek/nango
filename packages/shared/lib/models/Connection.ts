@@ -1,12 +1,12 @@
-import type { ApiKeyCredentials, BasicApiCredentials } from './Auth.js';
 import type { TimestampsAndDeleted } from './Generic.js';
-import type { AuthModeType, Metadata, AuthOperationType, AllAuthCredentials, DBTeam, DBEnvironment, ActiveLog } from '@nangohq/types';
+import type { AuthModeType, Metadata, AuthOperationType, AllAuthCredentials, DBTeam, DBEnvironment, ActiveLog, EndUser } from '@nangohq/types';
 
 export type ConnectionConfig = Record<string, any>;
 
 export interface BaseConnection extends TimestampsAndDeleted {
     id?: number;
     config_id?: number;
+    end_user_id: number | null;
     provider_config_key: string; // TO deprecate
     connection_id: string;
     connection_config: ConnectionConfig;
@@ -32,6 +32,7 @@ export interface RecentlyCreatedConnection {
     operation: AuthOperationType;
     environment: DBEnvironment;
     account: DBTeam;
+    endUser: EndUser | undefined;
 }
 
 export interface FailedConnectionError {
@@ -46,19 +47,6 @@ export interface RecentlyFailedConnection {
     operation: AuthOperationType;
     environment: DBEnvironment;
     account: DBTeam;
-}
-
-export interface ApiConnection {
-    id?: number;
-    connection_id: string;
-    provider_config_key: string;
-    config_id?: number;
-    environment_id: number;
-    metadata?: Metadata | null;
-    connection_config: ConnectionConfig;
-    credentials_iv?: string | null;
-    credentials_tag?: string | null;
-    credentials: BasicApiCredentials | ApiKeyCredentials;
 }
 
 export interface NangoConnection {

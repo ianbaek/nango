@@ -4,14 +4,17 @@ export interface WindowEnv {
     connectUrl: string;
     publicSentryKey: string;
     publicPosthogKey: string;
-    publicPosthogPost: string;
+    publicPosthogHost: string;
+    publicLogoDevKey: string;
+    publicKoalaApiUrl: string;
+    publicKoalaCdnUrl: string;
     isCloud: boolean;
     features: {
         logs: boolean;
         scripts: boolean;
         auth: boolean;
         managedAuth: boolean;
-        interactiveDemo: boolean;
-        connectUI: boolean;
+        gettingStarted: boolean;
+        slack: boolean;
     };
 }

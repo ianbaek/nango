@@ -19,7 +19,7 @@ export interface NangoSyncWebhookBodyBase extends NangoWebhookBase {
     providerConfigKey: string;
     syncName: string;
     model: string;
-    syncType: 'INCREMENTAL' | 'INITIAL';
+    syncType: 'INCREMENTAL' | 'INITIAL' | 'WEBHOOK';
 }
 
 export interface NangoSyncWebhookBodySuccess extends NangoSyncWebhookBodyBase {
@@ -51,6 +51,10 @@ export interface NangoAuthWebhookBodyBase extends NangoWebhookBase {
     provider: string;
     environment: string;
     operation: AuthOperationType;
+    /**
+     * Only presents if the connection happened with a session token
+     */
+    endUser?: { endUserId: string; organizationId?: string | undefined } | undefined;
 }
 
 export interface NangoAuthWebhookBodySuccess extends NangoAuthWebhookBodyBase {

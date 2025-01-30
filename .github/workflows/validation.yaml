@@ -6,6 +6,7 @@ on:
             - master
             - staging/**
     pull_request:
+    merge_group:
 
 concurrency:
     group: validation-${{ github.event.pull_request.number || github.ref }}
@@ -26,8 +27,9 @@ jobs:
                   node-version-file: '.nvmrc'
                   registry-url: 'https://registry.npmjs.org'
 
+            - run: npm ci
             - name: Validate YAML
-              run: |
-                  npm ci
+              run: npm run test:providers
 
-                  npx tsx scripts/validation/providers/validate.ts
+            - name: Validate OpenAPI
+              run: npm run test:openapi

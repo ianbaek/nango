@@ -21,8 +21,6 @@ export interface FormattedRecord {
 
 export type FormattedRecordWithMetadata = FormattedRecord & RecordMetadata;
 
-export type UnencryptedRecord = FormattedRecord & { record: UnencryptedRecordData };
-
 export interface EncryptedRecordData {
     iv: string;
     authTag: string;
@@ -57,4 +55,17 @@ export interface UpsertSummary {
     updatedKeys: string[];
     deletedKeys?: string[];
     nonUniqueKeys: string[];
+    nextMerging: MergingStrategy;
 }
+
+export interface RecordCount {
+    model: string;
+    connection_id: number;
+    environment_id: number;
+    count: number;
+    updated_at: string;
+}
+
+export type MergingStrategy = { strategy: 'override' } | { strategy: 'ignore_if_modified_after_cursor'; cursor: string };
+
+export type CursorOffset = 'first' | 'last';

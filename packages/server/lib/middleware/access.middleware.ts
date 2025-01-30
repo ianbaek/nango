@@ -1,19 +1,20 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { Result } from '@nangohq/utils';
-import { isCloud, isBasicAuthEnabled, getLogger, metrics, stringifyError, Err, Ok } from '@nangohq/utils';
+import { isCloud, isBasicAuthEnabled, getLogger, metrics, stringifyError, Err, Ok, stringTimingSafeEqual } from '@nangohq/utils';
 import { LogActionEnum, ErrorSourceEnum, environmentService, errorManager, userService } from '@nangohq/shared';
 import db from '@nangohq/database';
 import * as connectSessionService from '../services/connectSession.service.js';
 import { NANGO_ADMIN_UUID } from '../controllers/account.controller.js';
 import tracer from 'dd-trace';
 import type { RequestLocals } from '../utils/express.js';
-import type { ConnectSession, DBEnvironment, DBTeam } from '@nangohq/types';
+import type { ConnectSession, DBEnvironment, DBTeam, EndUser } from '@nangohq/types';
 import { connectSessionTokenSchema, connectSessionTokenPrefix } from '../helpers/validation.js';
+import { envs } from '../env.js';
 
 const logger = getLogger('AccessMiddleware');
 
 const keyRegex = /^[0-9A-F]{8}-[0-9A-F]{4}-[4][0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i;
-const ignoreEnvPaths = ['/api/v1/meta', '/api/v1/user', '/api/v1/user/name', '/api/v1/signin', '/api/v1/invite/:id'];
+const ignoreEnvPaths = ['/api/v1/environments', '/api/v1/meta', '/api/v1/user', '/api/v1/user/name', '/api/v1/signin', '/api/v1/invite/:id'];
 
 export class AccessMiddleware {
     private async validateSecretKey(secret: string): Promise<
@@ -169,6 +170,7 @@ export class AccessMiddleware {
             account: DBTeam;
             environment: DBEnvironment;
             connectSession: ConnectSession;
+            endUser: EndUser;
         }>
     > {
         const parsedToken = connectSessionTokenSchema.safeParse(token);
@@ -182,7 +184,7 @@ export class AccessMiddleware {
         }
 
         const result = await environmentService.getAccountAndEnvironment({
-            environmentId: getConnectSession.value.environmentId
+            environmentId: getConnectSession.value.connectSession.environmentId
         });
         if (!result) {
             return Err('unknown_account');
@@ -191,7 +193,8 @@ export class AccessMiddleware {
         return Ok({
             account: result.account,
             environment: result.environment,
-            connectSession: getConnectSession.value
+            connectSession: getConnectSession.value.connectSession,
+            endUser: getConnectSession.value.endUser
         });
     }
 
@@ -216,7 +219,6 @@ export class AccessMiddleware {
             }
 
             const result = await this.validateConnectSessionToken(token);
-
             if (result.isErr()) {
                 errorManager.errRes(res, result.error.message);
                 return;
@@ -226,6 +228,7 @@ export class AccessMiddleware {
             res.locals['account'] = result.value.account;
             res.locals['environment'] = result.value.environment;
             res.locals['connectSession'] = result.value.connectSession;
+            res.locals['endUser'] = result.value.endUser;
             tracer.setUser({
                 id: String(result.value.account.id),
                 environmentId: String(result.value.environment.id),
@@ -291,6 +294,7 @@ export class AccessMiddleware {
                 res.locals['account'] = connectSessionResult.value.account;
                 res.locals['environment'] = connectSessionResult.value.environment;
                 res.locals['connectSession'] = connectSessionResult.value.connectSession;
+                res.locals['endUser'] = connectSessionResult.value.endUser;
                 tracer.setUser({
                     id: String(connectSessionResult.value.account.id),
                     environmentId: String(connectSessionResult.value.environment.id),
@@ -327,6 +331,7 @@ export class AccessMiddleware {
                 res.locals['account'] = connectSessionResult.value.account;
                 res.locals['environment'] = connectSessionResult.value.environment;
                 res.locals['connectSession'] = connectSessionResult.value.connectSession;
+                res.locals['endUser'] = connectSessionResult.value.endUser;
                 tracer.setUser({
                     id: String(connectSessionResult.value.account.id),
                     environmentId: String(connectSessionResult.value.environment.id),
@@ -388,6 +393,27 @@ export class AccessMiddleware {
 
         next();
     }
+
+    internal(req: Request, res: Response, next: NextFunction) {
+        const key = envs.NANGO_INTERNAL_API_KEY;
+
+        if (!key) {
+            return errorManager.errRes(res, 'internal_private_key_configuration');
+        }
+
+        const authorizationHeader = req.get('authorization');
+
+        if (!authorizationHeader) {
+            return errorManager.errRes(res, 'missing_auth_header');
+        }
+
+        const receivedKey = authorizationHeader.split('Bearer ').pop();
+        if (!receivedKey || !stringTimingSafeEqual(receivedKey, key)) {
+            return errorManager.errRes(res, 'invalid_internal_private_key');
+        }
+
+        next();
+    }
 }
 
 /**
@@ -400,7 +426,8 @@ async function fillLocalsFromSession(req: Request, res: Response<any, RequestLoc
             res.status(401).send({ error: { code: 'unknown_user' } });
             return;
         }
-        res.locals['user'] = req.user!;
+
+        res.locals['user'] = user;
 
         if (ignoreEnvPaths.includes(req.route.path)) {
             next();

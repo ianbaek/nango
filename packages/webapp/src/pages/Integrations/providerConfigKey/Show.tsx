@@ -1,18 +1,19 @@
-import { useParams, Link, Routes, Route, useLocation } from 'react-router-dom';
+import { useParams, Routes, Route, useLocation } from 'react-router-dom';
 import { LeftNavBarItems } from '../../../components/LeftNavBar';
 import DashboardLayout from '../../../layout/DashboardLayout';
-import Button from '../../../components/ui/button/Button';
+import { ButtonLink } from '../../../components/ui/button/Button';
 import { BookOpenIcon } from '@heroicons/react/24/outline';
 import IntegrationLogo from '../../../components/ui/IntegrationLogo';
 import { useStore } from '../../../store';
 import { PlusIcon } from '@radix-ui/react-icons';
 import { useGetIntegration } from '../../../hooks/useIntegration';
 import { Skeleton } from '../../../components/ui/Skeleton';
-import { Info } from '../../../components/Info';
 import PageNotFound from '../../PageNotFound';
 import { useEffect, useRef, useState } from 'react';
 import { EndpointsShow } from './Endpoints/Show';
 import { SettingsShow } from './Settings/Show';
+import { Helmet } from 'react-helmet';
+import { ErrorPageComponent } from '../../../components/ErrorComponent';
 
 export const ShowIntegration: React.FC = () => {
     const { providerConfigKey } = useParams();
@@ -43,6 +44,9 @@ export const ShowIntegration: React.FC = () => {
     if (loading) {
         return (
             <DashboardLayout selectedItem={LeftNavBarItems.Integrations}>
+                <Helmet>
+                    <title>Integration - Nango</title>
+                </Helmet>
                 <div className="flex gap-4 justify-between">
                     <div className="flex gap-6">
                         <div className="shrink-0">
@@ -65,23 +69,7 @@ export const ShowIntegration: React.FC = () => {
     }
 
     if (error) {
-        if (error.error.code === 'not_found') {
-            return <PageNotFound />;
-        }
-
-        return (
-            <DashboardLayout selectedItem={LeftNavBarItems.TeamSettings}>
-                <h2 className="text-3xl font-semibold text-white mb-16">Integration</h2>
-                <Info variant={'destructive'}>
-                    An error occurred, refresh your page or reach out to the support.{' '}
-                    {error.error.code === 'generic_error_support' && (
-                        <>
-                            (id: <span className="select-all">{error.error.payload}</span>)
-                        </>
-                    )}
-                </Info>
-            </DashboardLayout>
-        );
+        return <ErrorPageComponent title="Integration" error={error} page={LeftNavBarItems.Integrations} />;
     }
 
     if (!data) {
@@ -90,6 +78,9 @@ export const ShowIntegration: React.FC = () => {
 
     return (
         <DashboardLayout selectedItem={LeftNavBarItems.Integrations} ref={ref}>
+            <Helmet>
+                <title>{data.integration.unique_key} - Integration - Nango</title>
+            </Helmet>
             <div className="flex gap-4 justify-between">
                 <div className="flex gap-6">
                     <div className="shrink-0">
@@ -102,32 +93,29 @@ export const ShowIntegration: React.FC = () => {
                         <div className="flex gap-4 items-center">
                             <h2 className="text-left text-3xl font-semibold text-white break-all">{data.integration.unique_key}</h2>
                             {data.template.docs && (
-                                <Link to={data.template.docs} target="_blank">
-                                    <Button variant="icon" size={'xs'}>
-                                        <BookOpenIcon className="h-5 w-5" />
-                                    </Button>
-                                </Link>
+                                <ButtonLink to={data.template.docs} target="_blank" variant="icon" size={'xs'}>
+                                    <BookOpenIcon className="h-5 w-5" />
+                                </ButtonLink>
                             )}
                         </div>
                     </div>
                 </div>
                 <div className="shrink-0">
-                    <Link to={`/${env}/connections/create/${data.integration.unique_key}`}>
-                        <Button variant="primary" size="sm">
-                            <PlusIcon />
-                            Add Connection
-                        </Button>
-                    </Link>
+                    <ButtonLink to={`/${env}/connections/create?integration_id=${data.integration.unique_key}`}>
+                        <PlusIcon className="flex h-5 w-5 mr-2 text-black" />
+                        Add Test Connection
+                    </ButtonLink>
                 </div>
             </div>
 
             <nav className="flex gap-2 my-11">
-                <Link to="./">
-                    <Button variant={tab === 'home' ? 'active' : 'zombie'}>Endpoints</Button>
-                </Link>
-                <Link to="./settings">
-                    <Button variant={tab === 'settings' ? 'active' : 'zombie'}>Settings</Button>
-                </Link>
+                <ButtonLink to="./" variant={tab === 'home' ? 'active' : 'zombie'}>
+                    Endpoints
+                </ButtonLink>
+                <ButtonLink to="./settings" variant={tab === 'settings' ? 'active' : 'zombie'}>
+                    Settings
+                    {data.integration.missing_fields.length > 0 && <span className="ml-2 bg-yellow-base h-1.5 w-1.5 rounded-full inline-block"></span>}
+                </ButtonLink>
             </nav>
             <Routes>
                 <Route path="/*" element={<EndpointsShow integration={data} />} />

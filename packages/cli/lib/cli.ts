@@ -5,15 +5,14 @@ import chalk from 'chalk';
 import chokidar from 'chokidar';
 import ejs from 'ejs';
 import * as dotenv from 'dotenv';
-import { spawn } from 'child_process';
-import type { ChildProcess } from 'node:child_process';
 
-import { NANGO_INTEGRATIONS_NAME, getNangoRootPath, getPkgVersion, printDebug } from './utils.js';
+import { getNangoRootPath, printDebug } from './utils.js';
 import { loadYamlAndGenerate } from './services/model.service.js';
-import { TYPES_FILE_NAME, exampleSyncName } from './constants.js';
+import { NANGO_INTEGRATIONS_NAME, TYPES_FILE_NAME, exampleSyncName } from './constants.js';
 import { compileAllFiles, compileSingleFile, getFileToCompile } from './services/compile.service.js';
 import { getLayoutMode } from './utils/layoutMode.js';
 import { getProviderConfigurationFromPath, nangoConfigFile } from '@nangohq/nango-yaml';
+import { NANGO_VERSION } from './version.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -24,7 +23,7 @@ export const version = (debug: boolean) => {
     if (debug) {
         printDebug('Looking up the version first for a local path first then globally');
     }
-    const version = getPkgVersion();
+    const version = NANGO_VERSION;
 
     console.log(chalk.green('Nango CLI version:'), version);
 };
@@ -33,23 +32,22 @@ export function generate({ fullPath, debug = false }: { fullPath: string; debug?
     const syncTemplateContents = fs.readFileSync(path.resolve(__dirname, './templates/sync.ejs'), 'utf8');
     const actionTemplateContents = fs.readFileSync(path.resolve(__dirname, './templates/action.ejs'), 'utf8');
     const githubExampleTemplateContents = fs.readFileSync(path.resolve(__dirname, './templates/github.sync.ejs'), 'utf8');
-    const postConnectionTemplateContents = fs.readFileSync(path.resolve(__dirname, './templates/post-connection.ejs'), 'utf8');
+    const onEventTemplateContents = fs.readFileSync(path.resolve(__dirname, './templates/on-event.ejs'), 'utf8');
 
-    const res = loadYamlAndGenerate({ fullPath, debug });
-    if (!res.success) {
+    const parsed = loadYamlAndGenerate({ fullPath, debug });
+    if (!parsed) {
         return;
     }
 
-    const parsed = res.response!;
     const allSyncNames: Record<string, boolean> = {};
 
     for (const integration of parsed.integrations) {
-        const { syncs, actions, postConnectionScripts, providerConfigKey } = integration;
+        const { syncs, actions, onEventScripts, providerConfigKey } = integration;
 
-        if (postConnectionScripts) {
-            const type = 'post-connection-script';
-            for (const name of postConnectionScripts) {
-                const rendered = ejs.render(postConnectionTemplateContents, {
+        if (onEventScripts) {
+            const type = 'on-event';
+            for (const name of Object.values(onEventScripts).flat()) {
+                const rendered = ejs.render(onEventTemplateContents, {
                     interfaceFileName: TYPES_FILE_NAME.replace('.ts', '')
                 });
                 const stripped = rendered.replace(/^\s+/, '');
@@ -221,16 +219,11 @@ NANGO_DEPLOY_AUTO_CONFIRM=false # Default value`
 
 export function tscWatch({ fullPath, debug = false }: { fullPath: string; debug?: boolean }) {
     const tsconfig = fs.readFileSync(path.resolve(getNangoRootPath(), 'tsconfig.dev.json'), 'utf8');
-    const res = loadYamlAndGenerate({ fullPath, debug });
-    if (!res.success) {
-        console.log(chalk.red(res.error?.message));
-        if (res.error?.payload) {
-            console.log(res.error.payload);
-        }
+    const parsed = loadYamlAndGenerate({ fullPath, debug });
+    if (!parsed) {
         return;
     }
 
-    const parsed = res.response!;
     const watchPath = ['./**/*.ts', `./${nangoConfigFile}`];
 
     if (debug) {
@@ -297,50 +290,3 @@ export function configWatch({ fullPath, debug = false }: { fullPath: string; deb
         loadYamlAndGenerate({ fullPath, debug });
     });
 }
-
-let child: ChildProcess | undefined;
-process.on('SIGINT', () => {
-    if (child) {
-        const dockerDown = spawn('docker', ['compose', '-f', path.join(getNangoRootPath(), 'docker/docker-compose.yaml'), '--project-directory', '.', 'down'], {
-            stdio: 'inherit'
-        });
-        dockerDown.on('exit', () => {
-            process.exit();
-        });
-    } else {
-        process.exit();
-    }
-});
-
-/**
- * Docker Run
- * @desc spawn a child process to run the docker compose located in the cli
- * Look into https://www.npmjs.com/package/docker-compose to avoid dependency maybe?
- */
-export const dockerRun = async (debug = false) => {
-    const cwd = process.cwd();
-
-    const args = ['compose', '-f', path.join(getNangoRootPath(), 'docker/docker-compose.yaml'), '--project-directory', '.', 'up', '--build'];
-
-    if (debug) {
-        printDebug(`Running docker with args: ${args.join(' ')}`);
-    }
-
-    child = spawn('docker', args, {
-        cwd,
-        detached: false,
-        stdio: 'inherit'
-    });
-
-    await new Promise((resolve, reject) => {
-        child?.on('exit', (code) => {
-            if (code !== 0) {
-                reject(new Error(`Error with the nango docker containers, please check your containers using 'docker ps''`));
-                return;
-            }
-            resolve(true);
-        });
-
-        child?.on('error', reject);
-    });
-};

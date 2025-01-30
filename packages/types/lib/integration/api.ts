@@ -2,8 +2,8 @@ import type { Merge } from 'type-fest';
 import type { ApiTimestamps, Endpoint } from '../api';
 import type { IntegrationConfig } from './db';
 import type { Provider } from '../providers/provider';
-import type { AuthModeType } from '../auth/api';
-import type { NangoModel, NangoSyncEndpoint, ScriptTypeLiteral } from '../nangoYaml';
+import type { AuthModeType, AuthModes } from '../auth/api';
+import type { NangoModel, NangoSyncEndpointV2, ScriptTypeLiteral } from '../nangoYaml';
 import type { LegacySyncModelSchema, NangoConfigMetadata } from '../deploy/incomingFlow';
 import type { JSONSchema7 } from 'json-schema';
 import type { SyncType } from '../scripts/syncs/api';
@@ -14,6 +14,10 @@ export type ApiPublicIntegration = Merge<Pick<IntegrationConfig, 'created_at' | 
 } & ApiPublicIntegrationInclude;
 export interface ApiPublicIntegrationInclude {
     webhook_url?: string | null;
+    credentials?:
+        | { type: AuthModes['OAuth2'] | AuthModes['OAuth1'] | AuthModes['TBA']; client_id: string | null; client_secret: string | null; scopes: string | null }
+        | { type: AuthModes['App']; app_id: string | null; private_key: string | null; app_link: string | null }
+        | null;
 }
 
 export type GetPublicListIntegrationsLegacy = Endpoint<{
@@ -27,6 +31,7 @@ export type GetPublicListIntegrationsLegacy = Endpoint<{
 export type GetPublicListIntegrations = Endpoint<{
     Method: 'GET';
     Path: '/integrations';
+    Querystring?: { connect_session_token: string };
     Success: {
         data: ApiPublicIntegration[];
     };
@@ -36,7 +41,7 @@ export type GetPublicIntegration = Endpoint<{
     Method: 'GET';
     Path: '/integrations/:uniqueKey';
     Params: { uniqueKey: string };
-    Querystring: { include?: 'webhook'[] | undefined };
+    Querystring: { include?: ('webhook' | 'credentials')[] | undefined };
     Success: { data: ApiPublicIntegration };
 }>;
 
@@ -47,19 +52,30 @@ export type DeletePublicIntegration = Endpoint<{
     Success: { success: true };
 }>;
 
+export type ApiIntegration = Omit<Merge<IntegrationConfig, ApiTimestamps>, 'oauth_client_secret_iv' | 'oauth_client_secret_tag'>;
+
+export type GetIntegrations = Endpoint<{
+    Method: 'GET';
+    Path: '/api/v1/integrations';
+    Success: {
+        data: ApiIntegration[];
+    };
+}>;
+
 export type PostIntegration = Endpoint<{
     Method: 'POST';
     Path: '/api/v1/integrations';
+    Querystring: { env: string };
     Body: { provider: string };
     Success: {
         data: ApiIntegration;
     };
 }>;
 
-export type ApiIntegration = Merge<IntegrationConfig, ApiTimestamps>;
 export type GetIntegration = Endpoint<{
     Method: 'GET';
     Path: '/api/v1/integrations/:providerConfigKey';
+    Querystring: { env: string };
     Params: { providerConfigKey: string };
     Success: {
         data: {
@@ -77,6 +93,7 @@ export type GetIntegration = Endpoint<{
 export type PatchIntegration = Endpoint<{
     Method: 'PATCH';
     Path: '/api/v1/integrations/:providerConfigKey';
+    Querystring: { env: string };
     Params: { providerConfigKey: string };
     Body:
         | { integrationId?: string | undefined; webhookSecret?: string | undefined }
@@ -110,6 +127,7 @@ export type PatchIntegration = Endpoint<{
 export type DeleteIntegration = Endpoint<{
     Method: 'DELETE';
     Path: '/api/v1/integrations/:providerConfigKey';
+    Querystring: { env: string };
     Params: { providerConfigKey: string };
     Success: {
         data: { success: boolean };
@@ -129,7 +147,7 @@ export interface NangoSyncConfig {
     track_deletes?: boolean;
     returns: string[] | string;
     models: any[];
-    endpoints: NangoSyncEndpoint[];
+    endpoints: NangoSyncEndpointV2[];
     is_public?: boolean | null;
     pre_built?: boolean | null;
     version?: string | null;
@@ -137,7 +155,6 @@ export interface NangoSyncConfig {
     id?: number;
     input?: NangoModel | LegacySyncModelSchema;
     sync_type?: SyncType;
-    nango_yaml_version?: string;
     webhookSubscriptions?: string[];
     enabled?: boolean;
     json_schema: JSONSchema7 | null;
@@ -147,6 +164,7 @@ export interface NangoSyncConfig {
 export type GetIntegrationFlows = Endpoint<{
     Method: 'GET';
     Path: '/api/v1/integrations/:providerConfigKey/flows';
+    Querystring: { env: string };
     Params: { providerConfigKey: string };
     Success: {
         data: {

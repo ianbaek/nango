@@ -3,30 +3,46 @@
 title: Shopify
 sidebarTitle: Shopify
 
+provider: shopify
 ---
 
-API configuration: [`shopify`](https://nango.dev/providers.yaml)
+import Overview from "/snippets/overview.mdx";
+import PreBuiltTooling from "/snippets/generated/shopify/PreBuiltTooling.mdx";
 
-## Features
+import PreBuiltUseCases from "/snippets/generated/shopify/PreBuiltUseCases.mdx"
 
-| Features | Status |
-| - | - |
-| [Auth (OAuth)](/integrate/guides/authorize-an-api) | ✅ |
-| [Sync data](/integrate/guides/sync-data-from-an-api) | ✅ |
-| [Perform workflows](/integrate/guides/perform-workflows-with-an-api) | ✅ |
-| [Proxy requests](/integrate/guides/proxy-requests-to-an-api) | ✅ |
-| [Receive webhooks](/integrate/guides/receive-webhooks-from-an-api) | 🚫 (time to contribute: &lt;48h) |
+<Overview />
+<PreBuiltTooling />
+<PreBuiltUseCases />
 
-<Tip>We can implement missing features in &lt;48h, just ask for it in the [community](https://nango.dev/slack).</Tip>
+## Access requirements
+| Pre-Requisites | Status | Comment|
+| - | - | - |
+| Paid dev account | ❓ |  |
+| Paid test account | ❓ |  |
+| Partnership | ❓ | |
+| App review | ❓ |  |
+| Security audit | ❓ | |
 
-## Getting started
+
+## Setup guide
+
+_No setup guide yet._
+
+<Tip>Need help getting started? Get help in the [community](https://nango.dev/slack).</Tip>
+
+<Note>Contribute improvements to the setup guide by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/shopify.mdx)</Note>
+
+
+## Useful links
 
 -   [How to register an Application](https://shopify.dev/docs/apps/auth/oauth/getting-started#step-1-retrieve-client-credentials)
 -   [OAuth-related docs](https://shopify.dev/docs/apps/auth/oauth)
 -   [List of OAuth scopes](https://shopify.dev/docs/api/usage/access-scopes#authenticated-access-scopes)
 -   [API](https://shopify.dev/docs/api/admin)
+-   [SCIM API Docs](https://help.shopify.com/en/manual/organization-settings/users/security/scim)
 
-<Tip>Need help getting started? Get help in the [community](https://nango.dev/slack).</Tip>
+<Note>Contribute useful links by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/shopify.mdx)</Note>
 
 ## Connection configuration in Nango
 
@@ -38,10 +54,24 @@ You should request this from the user and pass it to Nango in the `nango.auth()`
 nango.auth('shopify', '<CONNECTION-ID>', {params: {subdomain: '<shopify-subdomain>'}});
 ```
 
-For more details, see the [docs here](/integrate/guides/authorize-an-api#apis-requiring-connection-specific-configuration-for-authorization).
+For more details, see the [docs here](/guides/api-authorization/authorize-in-your-app-default-ui#apis-requiring-connection-specific-configuration-for-authorization).
 
 ## API gotchas
 
 _None yet, add yours!_
 
-<Note>Add Getting Started links and Gotchas by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/shopify.mdx)</Note>
+<Note>Contribute API gotchas by [editing this page](https://github.com/nangohq/nango/tree/master/docs-v2/integrations/all/shopify.mdx)</Note>
+
+## Going further
+
+<Card title="Connect to Shopify" icon="link" href="/integrations/all/shopify/connect" horizontal>
+  Guide to connect to Shopify using Connect UI
+</Card>
+
+<Card title="Connect to Shopify (api key)" icon="link" href="/integrations/all/shopify-api-key/connect" horizontal>
+  Guide to connect to Shopify (api key) using Connect UI
+</Card>
+
+<Card title="Connect to Shopify SCIM" icon="link" href="/integrations/all/shopify-scim/connect" horizontal>
+  Guide to connect to Shopify SCIM  using Nango Connect UI.
+</Card>

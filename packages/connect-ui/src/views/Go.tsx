@@ -33,7 +33,10 @@ const formSchema: Record<AuthModeType, z.AnyZodObject> = {
     NONE: z.object({}),
     OAUTH1: z.object({}),
     OAUTH2: z.object({}),
-    OAUTH2_CC: z.object({}),
+    OAUTH2_CC: z.object({
+        client_id: z.string().min(1),
+        client_secret: z.string().min(1)
+    }),
     TABLEAU: z.object({
         pat_name: z.string().min(1),
         pat_secret: z.string().min(1),
@@ -50,6 +53,9 @@ const formSchema: Record<AuthModeType, z.AnyZodObject> = {
             z.string()
         ])
     }),
+    TWO_STEP: z.object({
+        // TWO_STEP is custom every time
+    }),
     TBA: z.object({
         oauth_client_id_override: z.string().min(1),
         oauth_client_secret_override: z.string().min(1),
@@ -62,24 +68,32 @@ const formSchema: Record<AuthModeType, z.AnyZodObject> = {
         organization_id: z.string().min(1),
         dev_key: z.string().min(1)
     }),
+    SIGNATURE: z.object({
+        username: z.string().min(1),
+        password: z.string().min(1)
+    }),
     CUSTOM: z.object({})
 };
 
 const defaultConfiguration: Record<string, { secret: boolean; title: string; example: string }> = {
     'credentials.apiKey': { secret: true, title: 'API Key', example: 'Your API Key' },
-    'credentials.username': { secret: true, title: 'User Name', example: 'Your user name' },
-    'credentials.password': { secret: false, title: 'Password', example: 'Your password' },
+    'credentials.username': { secret: false, title: 'User Name', example: 'Your user name' },
+    'credentials.password': { secret: true, title: 'Password', example: 'Your password' },
     'credentials.pat_name': { secret: false, title: 'Personal App Token', example: 'Your PAT' },
     'credentials.pat_secret': { secret: true, title: 'Personal App Token Secret', example: 'Your PAT Secret' },
     'credentials.content_url': { secret: true, title: 'Content URL', example: 'Your content URL' },
+    'credentials.client_id': { secret: false, title: 'Client ID', example: 'Your Client ID' },
+    'credentials.client_secret': { secret: true, title: 'Client Secret', example: 'Your Client Secret' },
     'credentials.oauth_client_id_override': { secret: false, title: 'OAuth Client ID', example: 'Your OAuth Client ID' },
     'credentials.oauth_client_secret_override': { secret: true, title: 'OAuth Client Secret', example: 'Your OAuth Client Secret' },
     'credentials.token_id': { secret: true, title: 'Token ID', example: 'Your Token ID' },
-    'credentials.token_secret': { secret: true, title: 'Token Secret', example: 'Token Secret' }
+    'credentials.token_secret': { secret: true, title: 'Token Secret', example: 'Token Secret' },
+    'credentials.organization_id': { secret: false, title: 'Organization ID', example: 'Your Organization ID' },
+    'credentials.dev_key': { secret: true, title: 'Developer Key', example: 'Your Developer Key' }
 };
 
 export const Go: React.FC = () => {
-    const { provider, integration, session, setIsDirty } = useGlobal();
+    const { provider, integration, session, isSingleIntegration, setIsDirty } = useGlobal();
     const nango = useNango();
 
     const [loading, setLoading] = useState(false);
@@ -123,11 +137,22 @@ export const Go: React.FC = () => {
         // Modify base form with credentials specific
         for (const [name, schema] of Object.entries(provider.credentials || [])) {
             baseForm.shape[name] = jsonSchemaToZod(schema);
+
+            // In case the field only exists in provider.yaml (TWO_STEP)
+            const fullName = `credentials.${name}`;
+            if (!orderedFields[fullName]) {
+                order += 1;
+                orderedFields[fullName] = order;
+            }
         }
 
         // Append connectionConfig object
         const additionalFields: z.ZodRawShape = {};
         for (const [name, schema] of Object.entries(provider.connection_config || [])) {
+            if (schema.automated) {
+                continue;
+            }
+
             additionalFields[name] = jsonSchemaToZod(schema);
 
             if (schema.order) {
@@ -149,7 +174,9 @@ export const Go: React.FC = () => {
             ...(Object.keys(additionalFields).length > 0 ? { params: z.object(additionalFields) } : {})
         });
 
-        const fieldCount = Object.keys(fields.shape).length;
+        const fieldCount =
+            (fields.shape.credentials ? Object.keys(fields.shape.credentials.shape).length : 0) +
+            (fields.shape.params ? Object.keys(fields.shape.params?.shape).length : 0);
         const resolver = zodResolver(fields);
         return {
             shouldAutoTrigger: fieldCount - hiddenFields <= 0,
@@ -188,10 +215,22 @@ export const Go: React.FC = () => {
             nango.clear();
 
             try {
-                const res =
-                    provider.auth_mode === 'NONE'
-                        ? await nango.create(integration.unique_key, { ...values })
-                        : await nango.auth(integration.unique_key, { ...values, detectClosedAuthWindow: true });
+                let res: AuthResult;
+                // Legacy stuff because types were mixed together inappropriately
+                if (provider.auth_mode === 'NONE') {
+                    res = await nango.create(integration.unique_key, { ...values });
+                } else if (provider.auth_mode === 'OAUTH2' || provider.auth_mode === 'OAUTH1' || provider.auth_mode === 'CUSTOM') {
+                    res = await nango.auth(integration.unique_key, {
+                        ...values,
+                        detectClosedAuthWindow: true
+                    });
+                } else {
+                    res = await nango.auth(integration.unique_key, {
+                        params: values['params'] || {},
+                        credentials: { ...values['credentials'], type: provider.auth_mode },
+                        detectClosedAuthWindow: true
+                    });
+                }
                 setResult(res);
                 triggerConnection(res);
             } catch (err) {
@@ -256,7 +295,7 @@ export const Go: React.FC = () => {
                         setError(null);
                     }}
                 >
-                    Try Again
+                    Back
                 </Button>
             </main>
         );
@@ -264,44 +303,41 @@ export const Go: React.FC = () => {
 
     return (
         <>
-            <header className="flex flex-col gap-8 p-10">
-                <div className="flex justify-between">
-                    <Link to="/" onClick={() => setIsDirty(false)}>
-                        <Button className="gap-1" title="Back to integrations list" variant={'transparent'}>
-                            <IconArrowLeft stroke={1} /> back
-                        </Button>
-                    </Link>
+            <header className="relative m-10">
+                <div className="absolute top-0 left-0 w-full flex justify-between">
+                    {!isSingleIntegration ? (
+                        <Link to="/" onClick={() => setIsDirty(false)}>
+                            <Button className="gap-1" title="Back to integrations list" variant={'transparent'}>
+                                <IconArrowLeft stroke={1} /> back
+                            </Button>
+                        </Link>
+                    ) : (
+                        <div></div>
+                    )}
                     <Button size={'icon'} title="Close UI" variant={'transparent'} onClick={() => triggerClose()}>
                         <IconX stroke={1} />
                     </Button>
                 </div>
-                <div className="flex flex-col gap-5 items-center">
+                <div className="flex flex-col gap-5 items-center pt-10">
                     <div className="w-[70px] h-[70px] bg-white transition-colors rounded-xl shadow-card p-2.5 group-hover:bg-dark-100">
                         <img src={integration.logo} />
                     </div>
                     <h1 className="font-semibold text-xl text-dark-800">Link {provider.display_name} Account</h1>
-                    {provider.docs_connect && (
-                        <p className="text-dark-500">
-                            Stuck?{' '}
-                            <Link className="underline text-dark-800" target="_blank" to={provider.docs_connect}>
-                                View connection guide
-                            </Link>
-                        </p>
-                    )}
                 </div>
             </header>
             <main className="h-full overflow-auto p-10 pt-1">
                 <Form {...form}>
-                    <form className="flex flex-col gap-4 justify-between grow min-h-full" onSubmit={form.handleSubmit(onSubmit)}>
+                    <form className="flex flex-col gap-4 justify-between grow min-h-full animate-in" onSubmit={form.handleSubmit(onSubmit)}>
                         {orderedFields.length > 0 && (
                             <div className={cn('flex flex-col gap-8 p-7 rounded-md', !shouldAutoTrigger && 'border border-dark-300')}>
                                 {orderedFields.map(([name]) => {
                                     const [type, key] = name.split('.') as ['credentials' | 'params', string];
-                                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+
                                     const definition = provider[type === 'credentials' ? 'credentials' : 'connection_config']?.[key];
                                     // Not all fields have a definition in providers.yaml so we fallback to default
                                     const base = name in defaultConfiguration ? defaultConfiguration[name] : undefined;
                                     const isPreconfigured = preconfigured[key];
+                                    const isOptional = definition && 'optional' in definition && definition.optional === true;
 
                                     return (
                                         <FormField
@@ -312,10 +348,15 @@ export const Go: React.FC = () => {
                                             name={name}
                                             render={({ field }) => {
                                                 return (
-                                                    <FormItem className={cn(isPreconfigured || definition?.hidden ? 'hidden' : null)}>
+                                                    <FormItem className={cn(isPreconfigured || definition?.hidden || definition?.automated ? 'hidden' : null)}>
                                                         <div>
-                                                            <div className="flex gap-2 items-start pb-1">
-                                                                <FormLabel className="leading-4">{definition?.title || base?.title}</FormLabel>
+                                                            <div className="flex gap-2 items-center pb-1">
+                                                                <FormLabel className="leading-5">
+                                                                    {definition?.title || base?.title} {!isOptional && <span className="text-red-base">*</span>}
+                                                                </FormLabel>
+                                                                {isOptional && (
+                                                                    <span className="bg-dark-300 rounded-lg px-2 py-0.5 text-xs text-dark-500">optional</span>
+                                                                )}
                                                                 {definition?.doc_section && (
                                                                     <Link target="_blank" to={`${provider.docs_connect}${definition.doc_section}`}>
                                                                         <IconInfoCircle size={16} />
@@ -328,10 +369,11 @@ export const Go: React.FC = () => {
                                                             <FormControl>
                                                                 <CustomInput
                                                                     placeholder={definition?.example || definition?.title || base?.example}
+                                                                    prefix={definition?.prefix}
                                                                     suffix={definition?.suffix}
                                                                     {...field}
                                                                     autoComplete="off"
-                                                                    type={base?.secret ? 'password' : 'text'}
+                                                                    type={definition?.secret || base?.secret ? 'password' : 'text'}
                                                                 />
                                                             </FormControl>
                                                             <FormMessage />
@@ -345,10 +387,14 @@ export const Go: React.FC = () => {
                             </div>
                         )}
                         {shouldAutoTrigger && (
-                            <div className="text-sm text-dark-500 w-full text-center">
-                                We will connect you to {provider.display_name}
-                                {provider.auth_mode === 'OAUTH2' && ". A popup will open, please make sure your browser don't block popup"}
-                            </div>
+                            <>
+                                <div></div>
+                                <div className="text-sm text-dark-500 w-full text-center -mt-20">
+                                    {/* visual centering */}
+                                    We will connect you to {provider.display_name}
+                                    {provider.auth_mode === 'OAUTH2' && ". A popup will open, please make sure your browser doesn't block popups"}
+                                </div>
+                            </>
                         )}
                         <div className="flex flex-col gap-4">
                             {error && (
@@ -366,6 +412,14 @@ export const Go: React.FC = () => {
                                     </div>
                                     A pre-configured field set by the administrator is invalid, please reach out to the support
                                 </div>
+                            )}
+                            {provider.docs_connect && (
+                                <p className="text-dark-500 text-center">
+                                    Need help?{' '}
+                                    <Link className="underline text-dark-800" target="_blank" to={provider.docs_connect}>
+                                        View connection guide
+                                    </Link>
+                                </p>
                             )}
                             <Button
                                 className="w-full"

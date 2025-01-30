@@ -11,9 +11,10 @@ import type {
     AuthOperationType,
     AuthModeType,
     AuthModes,
-    HTTP_VERB,
-    NangoSyncEndpoint,
+    HTTP_METHOD,
+    NangoSyncEndpointV2,
     AllAuthCredentials,
+    OAuth1Token,
     OAuth1Credentials,
     OAuth2Credentials,
     OAuth2ClientCredentials,
@@ -27,7 +28,20 @@ import type {
     RecordMetadata,
     RecordLastAction,
     NangoRecord,
-    ActiveLog
+    JwtCredentials,
+    TwoStepCredentials,
+    CredentialsCommon,
+    TableauCredentials,
+    BillCredentials,
+    GetPublicProviders,
+    GetPublicProvider,
+    GetPublicListIntegrations,
+    GetPublicListIntegrationsLegacy,
+    GetPublicIntegration,
+    GetPublicConnections,
+    GetPublicConnection,
+    PostConnectSessions,
+    PostPublicConnectSessionsReconnect
 } from '@nangohq/types';
 
 export type {
@@ -45,6 +59,7 @@ export type {
     AuthModeType,
     AuthModes,
     AllAuthCredentials,
+    OAuth1Token,
     OAuth1Credentials,
     OAuth2Credentials,
     OAuth2ClientCredentials,
@@ -54,10 +69,27 @@ export type {
     AppStoreCredentials,
     UnauthCredentials,
     CustomCredentials,
-    TbaCredentials
+    CredentialsCommon,
+    TableauCredentials,
+    BillCredentials,
+    TbaCredentials,
+    JwtCredentials,
+    TwoStepCredentials
 };
-export type { HTTP_VERB, NangoSyncEndpoint };
+export type { HTTP_METHOD, NangoSyncEndpointV2 };
 export type { RecordMetadata, RecordLastAction, NangoRecord };
+
+export type {
+    GetPublicProviders,
+    GetPublicProvider,
+    GetPublicListIntegrations,
+    GetPublicListIntegrationsLegacy,
+    GetPublicIntegration,
+    GetPublicConnections,
+    GetPublicConnection,
+    PostConnectSessions,
+    PostPublicConnectSessionsReconnect
+};
 
 export interface NangoProps {
     host?: string;
@@ -73,11 +105,6 @@ export interface CreateConnectionOAuth1 extends OAuth1Credentials {
     connection_id: string;
     provider_config_key: string;
     type: AuthModes['OAuth1'];
-}
-
-export interface OAuth1Token {
-    oAuthToken: string;
-    oAuthTokenSecret: string;
 }
 
 export interface CreateConnectionOAuth2 extends OAuth2Credentials {
@@ -98,7 +125,7 @@ export interface ProxyConfiguration {
     data?: unknown;
     retries?: number;
     baseUrlOverride?: string;
-    decompress?: boolean;
+    decompress?: boolean | string;
     responseType?: 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream';
     retryOn?: number[] | null;
 }
@@ -126,30 +153,6 @@ export interface MetadataChangeResponse {
     metadata: Metadata;
     provider_config_key: string;
     connection_id: string | string[];
-}
-
-export interface Connection {
-    id?: number;
-    created_at: Date;
-    updated_at: Date;
-    provider_config_key: string;
-    connection_id: string;
-    connection_config: Record<string, string>;
-    environment_id: number;
-    metadata?: Metadata | null;
-    credentials_iv?: string | null;
-    credentials_tag?: string | null;
-    credentials: AllAuthCredentials;
-}
-
-export interface ConnectionList {
-    id: number;
-    connection_id: string;
-    provider_config_key: string;
-    provider: string;
-    created: string;
-    metadata?: Metadata | null;
-    errors: Pick<ActiveLog, 'log_id' | 'type'>[];
 }
 
 export interface IntegrationWithCreds extends Integration {
@@ -200,6 +203,7 @@ export interface SyncStatus {
     status: 'RUNNING' | 'SUCCESS' | 'ERROR' | 'PAUSED' | 'STOPPED';
     frequency: string;
     latestResult: Record<string, StatusAction>;
+    recordCount: Record<string, number>;
 }
 
 export interface StatusAction {
@@ -218,7 +222,6 @@ export interface UpdateSyncFrequencyResponse {
 
 export interface StandardNangoConfig {
     providerConfigKey: string;
-    rawName?: string;
     provider?: string;
     syncs: NangoSyncConfig[];
     actions: NangoSyncConfig[];
@@ -252,7 +255,7 @@ export interface NangoSyncConfig {
     track_deletes?: boolean;
     returns: string[];
     models: NangoSyncModel[];
-    endpoints: NangoSyncEndpoint[];
+    endpoints: NangoSyncEndpointV2[];
     is_public?: boolean;
     pre_built?: boolean;
     version?: string | null;
@@ -260,7 +263,6 @@ export interface NangoSyncConfig {
 
     input?: NangoSyncModel;
     sync_type?: SyncType;
-    nango_yaml_version?: string;
     webhookSubscriptions?: string[];
 }
 

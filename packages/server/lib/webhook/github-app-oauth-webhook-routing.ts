@@ -81,7 +81,7 @@ async function handleCreateWebhook(integration: ProviderConfig, body: any, logCo
         }
 
         const activityLogId = connection.connection_config['pendingLog'];
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete connection.connection_config['pendingLog'];
 
         const connectionConfig = {
@@ -98,7 +98,8 @@ async function handleCreateWebhook(integration: ProviderConfig, body: any, logCo
                     environment,
                     account,
                     auth_mode: 'APP',
-                    operation: res.operation
+                    operation: res.operation,
+                    endUser: undefined // TODO fix this
                 },
                 integration.provider,
                 logContextGetter,

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import ms from 'ms';
 import type { StringValue } from 'ms';
-import type { NangoYaml, NangoYamlParsed, NangoYamlParsedIntegration } from '@nangohq/types';
+import type { HTTP_METHOD, NangoSyncEndpointV2, NangoYaml, NangoYamlParsed, NangoYamlParsedIntegration, NangoYamlV2Endpoint } from '@nangohq/types';
 
 interface IntervalResponse {
     interval: StringValue;
@@ -21,7 +21,7 @@ export function determineVersion(configData: NangoYaml): 'v1' | 'v2' {
 
     const firstProviderConfig = configData.integrations[keys[0]!];
 
-    if (firstProviderConfig && ('syncs' in firstProviderConfig || 'actions' in firstProviderConfig)) {
+    if (firstProviderConfig && ('syncs' in firstProviderConfig || 'actions' in firstProviderConfig || 'on-events' in firstProviderConfig)) {
         return 'v2';
     } else {
         return 'v1';
@@ -181,7 +181,7 @@ export function shouldQuote(name: string) {
 export function getProviderConfigurationFromPath({ filePath, parsed }: { filePath: string; parsed: NangoYamlParsed }): NangoYamlParsedIntegration | null {
     const pathSegments = filePath.split(path.sep);
     const scriptType = pathSegments.length > 1 ? pathSegments[pathSegments.length - 2] : null;
-    const isNested = scriptType === 'syncs' || scriptType === 'actions' || scriptType === 'post-connection-scripts';
+    const isNested = scriptType && ['syncs', 'actions', 'post-connection-scripts', 'on-events'].includes(scriptType);
 
     const baseName = path.basename(filePath, '.ts');
     let providerConfiguration: NangoYamlParsedIntegration | null = null;
@@ -193,4 +193,17 @@ export function getProviderConfigurationFromPath({ filePath, parsed }: { filePat
     }
 
     return providerConfiguration;
+}
+
+export function parseEndpoint(rawEndpoint: string | NangoSyncEndpointV2 | NangoYamlV2Endpoint, defaultMethod: HTTP_METHOD): NangoSyncEndpointV2 {
+    if (typeof rawEndpoint === 'string') {
+        const endpoint = rawEndpoint.split(' ');
+        if (endpoint.length > 1) {
+            return { method: endpoint[0] as HTTP_METHOD, path: endpoint[1] as string };
+        }
+
+        return { method: defaultMethod, path: endpoint[0] as string };
+    }
+
+    return { method: rawEndpoint.method || defaultMethod, path: rawEndpoint.path, group: rawEndpoint.group };
 }

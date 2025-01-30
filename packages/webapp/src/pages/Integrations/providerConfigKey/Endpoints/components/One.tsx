@@ -53,8 +53,7 @@ export const EndpointOne: React.FC<{ integration: GetIntegration['Success']['dat
             let res = '';
 
             const activeEndpointIndex = flow.endpoints.findIndex((endpoint) => {
-                const obj = Object.entries(endpoint)[0];
-                return obj[0] === flow.endpoint.method && obj[1] === flow.endpoint.path;
+                return endpoint.method === flow.endpoint.method && endpoint.path === flow.endpoint.path;
             });
             const outputModelName = Array.isArray(flow.returns) ? flow.returns[activeEndpointIndex] : flow.returns;
             // This code is completely valid but webpack is complaining for some obscure reason
@@ -217,7 +216,7 @@ export const EndpointOne: React.FC<{ integration: GetIntegration['Success']['dat
                             <div className="text-text-light-gray">Request</div>
                             <div className="flex gap-2 items-center ">
                                 <Select defaultValue={language} onValueChange={(v) => setLanguage(v as any)}>
-                                    <SelectTrigger className="bg-dark-600 uppercase text-text-light-gray text-[11px] px-1.5 py-0.5 h-auto">
+                                    <SelectTrigger className="uppercase text-text-light-gray text-[11px] px-1.5 py-0.5 h-auto">
                                         <SelectValue placeholder="Language" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -258,7 +257,7 @@ export const EndpointOne: React.FC<{ integration: GetIntegration['Success']['dat
                         <header className="flex justify-between items-center bg-active-gray px-4 py-2 rounded-t-md">
                             <div className="text-text-light-gray">Response</div>
                             <div className="flex gap-2 items-center ">
-                                <Tag bgClassName="bg-dark-600">Json</Tag>
+                                <Tag variant={'neutral'}>Json</Tag>
                                 <CopyButton text={responseSnippet} />
                             </div>
                         </header>

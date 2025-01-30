@@ -1,4 +1,4 @@
-FROM node:20.12.2-slim
+FROM node:20.18.1-bookworm-slim
 
 RUN apt-get update \
     && apt-get install -y ca-certificates \
@@ -14,6 +14,8 @@ COPY packages/shared/ packages/shared/
 COPY packages/utils/ packages/utils/
 COPY packages/database/ packages/database/
 COPY packages/runner/ packages/runner/
+COPY packages/providers/ packages/providers/
+COPY packages/runner-sdk/ packages/runner-sdk/
 COPY package*.json ./
 
 RUN npm pkg delete scripts.prepare

@@ -1,20 +1,22 @@
 import type { JSONSchema7 } from 'json-schema';
 
 import type { Endpoint, ApiError } from '../api.js';
-import type { IncomingFlowConfig, PostConnectionScriptByProvider } from './incomingFlow.js';
+import type { IncomingFlowConfig, OnEventScriptsByProvider } from './incomingFlow.js';
+import type { SyncDeploymentResult } from './index.js';
+import type { OnEventType } from '../scripts/on-events/api.js';
 
 export type PostDeployConfirmation = Endpoint<{
     Method: 'POST';
     Path: '/sync/deploy/confirmation';
     Body: {
         flowConfigs: IncomingFlowConfig[];
-        postConnectionScriptsByProvider: PostConnectionScriptByProvider[];
+        onEventScriptsByProvider?: OnEventScriptsByProvider[] | undefined;
         reconcile: boolean;
         debug: boolean;
         singleDeployMode?: boolean;
         jsonSchema?: JSONSchema7 | undefined;
     };
-    Success: SyncAndActionDifferences;
+    Success: ScriptDifferences;
 }>;
 
 export type PostDeploy = Endpoint<{
@@ -22,14 +24,14 @@ export type PostDeploy = Endpoint<{
     Path: '/sync/deploy';
     Body: {
         flowConfigs: IncomingFlowConfig[];
-        postConnectionScriptsByProvider: PostConnectionScriptByProvider[];
+        onEventScriptsByProvider?: OnEventScriptsByProvider[] | undefined;
         nangoYamlBody: string;
         reconcile: boolean;
         debug: boolean;
         singleDeployMode?: boolean;
         jsonSchema?: JSONSchema7 | undefined;
     };
-    Success: any[]; // TODO: move SyncDeploymentResult here
+    Success: SyncDeploymentResult[];
 }>;
 
 export type PostDeployInternal = Endpoint<{
@@ -40,7 +42,7 @@ export type PostDeployInternal = Endpoint<{
     };
     Body: {
         flowConfigs: IncomingFlowConfig[];
-        postConnectionScriptsByProvider: PostConnectionScriptByProvider[];
+        onEventScriptsByProvider?: OnEventScriptsByProvider[] | undefined;
         nangoYamlBody: string;
         reconcile: boolean;
         debug: boolean;
@@ -48,7 +50,7 @@ export type PostDeployInternal = Endpoint<{
         jsonSchema?: JSONSchema7 | undefined;
     };
     Error: ApiError<'forbidden'> | ApiError<'environment_creation_error'>;
-    Success: any[]; // TODO: move SyncDeploymentResult here
+    Success: SyncDeploymentResult[];
 }>;
 
 export interface SlimSync {
@@ -67,10 +69,21 @@ export interface SlimAction {
     name: string;
 }
 
+export interface SlimOnEventScript {
+    providerConfigKey: string;
+    name: string;
+    event: OnEventType;
+}
+
 export interface SyncAndActionDifferences {
     newSyncs: SlimSync[];
     deletedSyncs: SlimSync[];
     newActions: SlimAction[];
     deletedActions: SlimAction[];
     deletedModels: string[];
+}
+
+export interface ScriptDifferences extends SyncAndActionDifferences {
+    newOnEventScripts: SlimOnEventScript[];
+    deletedOnEventScripts: SlimOnEventScript[];
 }

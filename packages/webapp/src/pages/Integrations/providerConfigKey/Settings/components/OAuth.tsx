@@ -3,7 +3,7 @@ import { CopyButton } from '../../../../../components/ui/button/CopyButton';
 import { defaultCallback } from '../../../../../utils/utils';
 import type { EnvironmentAndAccount } from '@nangohq/server';
 import SecretInput from '../../../../../components/ui/input/SecretInput';
-import Button from '../../../../../components/ui/button/Button';
+import { Button } from '../../../../../components/ui/button/Button';
 import { InfoBloc } from '../../../../../components/InfoBloc';
 import { Input } from '../../../../../components/ui/input/Input';
 import { useState } from 'react';
@@ -61,7 +61,7 @@ export const SettingsOAuth: React.FC<{ data: GetIntegration['Success']['data']; 
                         required
                         minLength={1}
                         variant={'flat'}
-                        after={<CopyButton text={integration.oauth_client_id} />}
+                        after={<CopyButton text={integration.oauth_client_id || ''} />}
                     />
                 </InfoBloc>
 

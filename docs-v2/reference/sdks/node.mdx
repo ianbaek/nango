@@ -158,7 +158,7 @@ await nango.listIntegrations()
 Returns a specific integration.
 
 ```js
-await nango.getIntegration({ unique_key: <UNIQUE_KEY> });
+await nango.getIntegration({ uniqueKey: <UNIQUE_KEY> });
 
 // Deprecated
 await nango.getIntegration(<INTEGRATION-ID>);
@@ -167,8 +167,8 @@ await nango.getIntegration(<INTEGRATION-ID>);
 **Parameters**
 
 <Expandable>
-    <ResponseField name="unique_key" type="string" required>
-         The integration ID (`unique_key`)
+    <ResponseField name="uniqueKey" type="string" required>
+         The integration ID
     </ResponseField>
     <ResponseField name="include" type="array">
         Include sensitive data. Allowed values: `webhook`
@@ -347,8 +347,21 @@ await nango.listConnections();
 **Parameters**
 
 <Expandable>
-    <ResponseField name="connectionId" type="string" required>
-        Filter the list of connections based on this connection ID. If ommitted, returns all connections.
+    <ResponseField name="connectionId" type="string">
+        Optional. Will exactly match a given connectionId. Can return multiple connections with the same ID across integrations.
+    </ResponseField>
+    <ResponseField name="search" type="string">
+        Optional. Search connections. Will search in connection ID or end user profile.
+    </ResponseField>
+    <ResponseField name="queries" type="object">
+        <Expandable title="queries" defaultOpen>
+            <ResponseField name="endUserId" type="string">
+                Optional. Will exactly match a given end user ID.
+            </ResponseField>
+            <ResponseField name="endUserOrganizationId" type="string">
+                Optional. Will exactly match a given end organization ID.
+            </ResponseField>
+        </Expandable>
     </ResponseField>
 </Expandable>
 
@@ -376,7 +389,14 @@ await nango.listConnections();
             "metadata": {
                 "bot_id": "some-uuid"
             },
-            errors: [{ "type": "auth", "log_id": "VrnbtykXJFckCm3HP93t"}]
+            "errors": [{ "type": "auth", "log_id": "VrnbtykXJFckCm3HP93t"}],
+            "end_user": {
+                "id": "your-internal-id",
+                "email": "user@example.com",
+                "organization": {
+                    "id": "user-organization-id"
+                }
+            }
         }
     ]
 }
@@ -394,7 +414,7 @@ await nango.getConnection(<INTEGRATION-ID>, <CONNECTION-ID>);
 <Info>
 The response content depends on the API authentication type (OAuth 2, OAuth 1, API key, Basic auth, etc.).
 
-If you do not want to deal with collecting & injecting credentials in requests for multiple authentication types, use the Proxy ([step-by-step guide](/integrate/guides/proxy-requests-to-an-api)).
+If you do not want to deal with collecting & injecting credentials in requests for multiple authentication types, use the Proxy ([step-by-step guide](/guides/individual-requests)).
 </Info>
 
 <Tip>
@@ -447,7 +467,6 @@ We recommend not caching tokens for longer than 5 minutes to ensure they are fre
         "realmId": "XXXXX",
         "instance_id": "YYYYYYY"
     },
-    "account_id": 0,
     "metadata": {
         "myProperty": "yes",
         "filter": "closed=true"
@@ -923,7 +942,7 @@ await nango.startSync('<INTEGRATION-ID>', ['SYNC_NAME1', 'SYNC_NAME2'], '<CONNEC
         The name of the syncs that should be triggered.
     </ResponseField>
     <ResponseField name="connectionId" type="string">
-        The connection ID. If ommitted, the sync will trigger for all relevant connections.
+        The connection ID. If omitted, the sync will trigger for all relevant connections.
     </ResponseField>
 </Expandable>
 
@@ -949,7 +968,7 @@ await nango.startSync('<INTEGRATION-ID>', ['SYNC_NAME1', 'SYNC_NAME2'], '<CONNEC
         The name of the syncs that should be paused.
     </ResponseField>
     <ResponseField name="connectionId" type="string">
-        The connection ID. If ommitted, the sync will pause for all relevant connections.
+        The connection ID. If omitted, the sync will pause for all relevant connections.
     </ResponseField>
 </Expandable>
 
@@ -987,13 +1006,24 @@ await nango.syncStatus('<INTEGRATION-ID>', ['SYNC_NAME1', 'SYNC_NAME2'], '<CONNE
     "syncs": [
         {
             "id": "<string>",
+            "connection_id": "<string>",
             "name": "<string>",
             "status": "RUNNING",
             "type": "INCREMENTAL",
             "finishedAt": "<string>",
             "nextScheduledSyncAt": "<string>",
             "frequency": "<string>",
-            "latestResult": {}
+            "latestResult": {
+                "<string>": {
+                    "added": <number>,
+                    "updated": <number>,
+                    "deleted": <number>,
+                }
+            },
+            "recordCount": {
+                "<string>": <number>
+                ...
+            }
         }
     ]
 }
@@ -1082,7 +1112,7 @@ await nango.triggerAction('<INTEGRATION-ID>', '<CONNECTION_ID>', '<ACTION-NAME>'
     <ResponseField name="actionName" type="string" required>
         The name of the action to trigger.
     </ResponseField>
-    <ResponseField name="input" type="unkown" required>
+    <ResponseField name="input" type="unknown" required>
         The necessary input for your action's `runAction` function.
     </ResponseField>
 </Expandable>
@@ -1099,7 +1129,7 @@ await nango.triggerAction('<INTEGRATION-ID>', '<CONNECTION_ID>', '<ACTION-NAME>'
 
 # Proxy
 
-Makes an HTTP request using the [proxy](/understand/concepts/proxy):
+Makes an HTTP request using the [proxy](/guides/individual-requests):
 
 ```js
 const config = {
@@ -1145,7 +1175,7 @@ await nango.delete(config); // DELETE request
                 Array of additional status codes to retry a request in addition to the 5xx, 429, ECONNRESET, ETIMEDOUT, and ECONNABORTED
             </ResponseField>
             <ResponseField name="baseUrlOverride" type="string">
-                The API base URL. Can be ommitted if the base URL is configured for this API in the [providers.yaml](https://nango.dev/providers.yaml).
+                The API base URL. Can be omitted if the base URL is configured for this API in the [providers.yaml](https://nango.dev/providers.yaml).
             </ResponseField>
             <ResponseField name="decompress" type="boolean">
                 Override the decompress option when making requests. Optional, defaults to false
@@ -1202,7 +1232,7 @@ const { data } = await nango.createConnectSession({
       <ResponseField name="id" type="string" required>
         The unique identifier for the end user.
       </ResponseField>
-      <ResponseField name="email" type="string" required>
+      <ResponseField name="email" type="string">
         The email address of the end user.
       </ResponseField>
       <ResponseField name="display_name" type="string">
@@ -1243,6 +1273,108 @@ const { data } = await nango.createConnectSession({
 }
 ```
 </Expandable>
+
+
+### Create a reconnect session
+
+Create a reconnect session for a given `connection_id`. Optionally, you can set `end_user` and `organization` to update those attributes of the connection.
+Use this method when a user needs to input new credentials or to manually refresh token.
+
+<Info>This method is only compatible with `connection_id` created with a session token.</Info>
+
+```js
+const { data } = await nango.createReconnectSession({
+  // Required
+  connection_id: '<CONNECTION-ID>'
+  integration_id: '<INTEGRATION-ID>',
+
+  // Optional
+  end_user: {
+    id: '<END-USER-ID>',
+    email: '<END-USER-EMAIL>',
+    display_name: '<END-USER-NAME>'
+  },
+  organization: {
+    id: '<ORGANIZATION-ID>',
+    display_name: '<ORGANIZATION-NAME>'
+  },
+  integrations_config_defaults: {
+    <INTEGRATION-ID-1>: {
+      connection_config: {
+        <CONFIG-KEY>: '<VALUE>'
+      }
+    }
+  }
+});
+```
+
+**Parameters**
+
+<Expandable>
+  <ResponseField name="connection_id" type="string" required>
+    The unique identifier for the connection.
+  </ResponseField>
+
+  <ResponseField name="integration_id" type="string" required>
+    The unique identifier for the integration.
+  </ResponseField>
+
+  <ResponseField name="end_user" type="object">
+    <Expandable title="end_user">
+      <ResponseField name="id" type="string" required>
+        The unique identifier for the end user.
+      </ResponseField>
+      <ResponseField name="email" type="string">
+        The email address of the end user.
+      </ResponseField>
+      <ResponseField name="display_name" type="string">
+        The display name of the end user.
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+
+  <ResponseField name="organization" type="object">
+    <Expandable title="organization">
+      <ResponseField name="id" type="string" required>
+        The unique identifier for the organization.
+      </ResponseField>
+      <ResponseField name="display_name" type="string">
+        The display name of the organization.
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+
+  <ResponseField name="integrations_config_defaults" type="object">
+    Default configuration for specific integrations.
+  </ResponseField>
+</Expandable>
+
+**Returns**
+
+<Expandable>
+```json
+{
+    "data": {
+        "token": "nango_connect_session_4603dbca8a588315ba69b5bfddde52e72d312dc2d2870bd5e45da6357333601c",
+        "expires_at": "2024-09-27T19:49:51.449Z"
+    }
+}
+```
+</Expandable>
+
+# Webhook
+
+### Verify Webhook Signature
+
+Asserts that a Webhook is coming from Nango's backend.
+
+```js
+async (req, res) => {
+    const signature = req.headers['x-nango-signature'];
+    const isValid = nango.verifyWebhookSignature(signature, req.body);
+}
+```
+
 
 <Tip>
 **Questions, problems, feedback?** Please reach out in the [Slack community](https://nango.dev/slack).

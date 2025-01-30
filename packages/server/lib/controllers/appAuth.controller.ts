@@ -10,7 +10,8 @@ import {
     LogActionEnum,
     telemetry,
     LogTypes,
-    getProvider
+    getProvider,
+    linkConnection
 } from '@nangohq/shared';
 import { missesInterpolationParam } from '../utils/utils.js';
 import * as WSErrBuilder from '../utils/web-socket-error.js';
@@ -19,6 +20,9 @@ import publisher from '../clients/publisher.client.js';
 import { logContextGetter } from '@nangohq/logs';
 import { stringifyError } from '@nangohq/utils';
 import { connectionCreated as connectionCreatedHook, connectionCreationFailed as connectionCreationFailedHook } from '../hooks/hooks.js';
+import db from '@nangohq/database';
+import type { ConnectSessionAndEndUser } from '../services/connectSession.service.js';
+import { getConnectSession } from '../services/connectSession.service.js';
 
 class AppAuthController {
     async connect(req: Request, res: Response<any, never>, _next: NextFunction) {
@@ -123,7 +127,8 @@ class AppAuthController {
                 await logCtx.error(error.message, { connectionConfig, url: req.originalUrl });
                 await logCtx.failed();
 
-                return publisher.notifyErr(res, wsClientId, providerConfigKey, connectionId, error);
+                await publisher.notifyErr(res, wsClientId, providerConfigKey, connectionId, error);
+                return;
             }
 
             if (!installation_id) {
@@ -167,7 +172,8 @@ class AppAuthController {
                     logCtx
                 );
 
-                return publisher.notifyErr(res, wsClientId, providerConfigKey, connectionId, error as NangoError);
+                await publisher.notifyErr(res, wsClientId, providerConfigKey, connectionId, error as NangoError);
+                return;
             }
 
             const [updatedConnection] = await connectionService.upsertConnection({
@@ -179,23 +185,46 @@ class AppAuthController {
                 environmentId: environment.id,
                 accountId: account.id
             });
-
-            if (updatedConnection) {
-                await logCtx.enrichOperation({ connectionId: updatedConnection.connection.id!, connectionName: updatedConnection.connection.connection_id });
-                void connectionCreatedHook(
-                    {
-                        connection: updatedConnection.connection,
-                        environment,
-                        account,
-                        auth_mode: 'APP',
-                        operation: updatedConnection.operation
-                    },
-                    session.provider,
-                    logContextGetter,
-                    undefined,
-                    logCtx
-                );
+            if (!updatedConnection) {
+                await logCtx.error('Failed to create connection');
+                await logCtx.failed();
+                await publisher.notifyErr(res, wsClientId, providerConfigKey, connectionId, WSErrBuilder.UnknownError('failed to create connection'));
+                return;
             }
+
+            let connectSession: ConnectSessionAndEndUser | undefined;
+            if (session.connectSessionId) {
+                const connectSessionRes = await getConnectSession(db.knex, {
+                    id: session.connectSessionId,
+                    accountId: account.id,
+                    environmentId: environment.id
+                });
+                if (connectSessionRes.isErr()) {
+                    await logCtx.error('Failed to get session');
+                    await logCtx.failed();
+                    await publisher.notifyErr(res, wsClientId, providerConfigKey, connectionId, WSErrBuilder.UnknownError('failed to get session'));
+                    return;
+                }
+
+                connectSession = connectSessionRes.value;
+                await linkConnection(db.knex, { endUserId: connectSession.connectSession.endUserId, connection: updatedConnection.connection });
+            }
+
+            await logCtx.enrichOperation({ connectionId: updatedConnection.connection.id!, connectionName: updatedConnection.connection.connection_id });
+            void connectionCreatedHook(
+                {
+                    connection: updatedConnection.connection,
+                    environment,
+                    account,
+                    auth_mode: 'APP',
+                    operation: updatedConnection.operation,
+                    endUser: connectSession?.endUser
+                },
+                session.provider,
+                logContextGetter,
+                undefined,
+                logCtx
+            );
 
             await logCtx.info('App connection was successful and credentials were saved');
             await logCtx.success();
@@ -208,7 +237,8 @@ class AppAuthController {
                 authMode: String(provider.auth_mode)
             });
 
-            return publisher.notifySuccess(res, wsClientId, providerConfigKey, connectionId);
+            await publisher.notifySuccess(res, wsClientId, providerConfigKey, connectionId);
+            return;
         } catch (err) {
             const prettyError = stringifyError(err, { pretty: true });
 

@@ -1,7 +1,6 @@
 import { LeftNavBarItems } from '../../components/LeftNavBar';
 import DashboardLayout from '../../layout/DashboardLayout';
 import { useStore } from '../../store';
-import { Info } from '../../components/Info';
 import { useSearchOperations } from '../../hooks/useLogs';
 import * as Table from '../../components/ui/Table';
 import { getCoreRowModel, useReactTable, flexRender } from '@tanstack/react-table';
@@ -35,12 +34,14 @@ import { useDebounce, useIntersection, useInterval, usePreviousDistinct } from '
 import { SearchableMultiSelect } from './components/SearchableMultiSelect';
 import { TypesSelect } from './components/TypesSelect';
 import { DatePicker } from './components/DatePicker';
-import Button from '../../components/ui/button/Button';
+import { Button } from '../../components/ui/button/Button';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { OperationDrawer } from './components/OperationDrawer';
 import { OperationRow } from './components/OperationRow';
 import type { DateRange } from 'react-day-picker';
 import { getPresetRange, matchPresetFromRange, slidePeriod } from '../../utils/logs';
+import { ErrorPageComponent } from '../../components/ErrorComponent';
+import { Helmet } from 'react-helmet';
 
 const limit = 20;
 
@@ -311,37 +312,36 @@ export const LogsSearch: React.FC = () => {
     }, [period]);
 
     if (error) {
-        return (
-            <DashboardLayout selectedItem={LeftNavBarItems.Logs} fullWidth className="p-6">
-                <h2 className="text-3xl font-semibold text-white mb-4">Logs</h2>
-                {error.error.code === 'feature_disabled' ? (
+        if (error.error.code === 'feature_disabled') {
+            return (
+                <DashboardLayout selectedItem={LeftNavBarItems.Logs} fullWidth className="p-6">
+                    <Helmet>
+                        <title>Logs - Nango</title>
+                    </Helmet>
+                    <h2 className="text-3xl font-semibold text-white mb-4">Logs</h2>
                     <div className="flex gap-2 flex-col border border-border-gray rounded-md items-center text-white text-center p-10 py-20">
                         <h2 className="text-xl text-center">Logs not configured</h2>
                         <div className="text-sm text-gray-400">
                             Follow{' '}
-                            <Link to="https://docs.nango.dev/host/self-host/self-hosting-instructions#logs" className="text-blue-400">
+                            <Link to="https://docs.nango.dev/guides/self-hosting/free-self-hosting/overview#logs" className="text-blue-400">
                                 these instructions
                             </Link>{' '}
                             to configure logs.
                         </div>
                     </div>
-                ) : (
-                    <Info variant={'destructive'}>
-                        An error occurred, refresh your page or reach out to the support.{' '}
-                        {error.error.code === 'generic_error_support' && (
-                            <>
-                                (id: <span className="select-all">{error.error.payload}</span>)
-                            </>
-                        )}
-                    </Info>
-                )}
-            </DashboardLayout>
-        );
+                </DashboardLayout>
+            );
+        }
+
+        return <ErrorPageComponent title="Logs" error={error} page={LeftNavBarItems.Logs} />;
     }
 
     if (!synced) {
         return (
             <DashboardLayout selectedItem={LeftNavBarItems.Logs} fullWidth className="p-6">
+                <Helmet>
+                    <title>Logs - Nango</title>
+                </Helmet>
                 <h2 className="text-3xl font-semibold text-white mb-4">Logs</h2>
 
                 <div className="flex gap-2 flex-col">
@@ -355,6 +355,9 @@ export const LogsSearch: React.FC = () => {
 
     return (
         <DashboardLayout selectedItem={LeftNavBarItems.Logs} fullWidth className="p-6">
+            <Helmet>
+                <title>Logs - Nango</title>
+            </Helmet>
             <div className="flex justify-between items-center">
                 <h2 className="text-3xl font-semibold text-white mb-4 flex gap-4 items-center">Logs {loading && <Spinner size={1} />}</h2>
                 <div className="text-white text-xs">

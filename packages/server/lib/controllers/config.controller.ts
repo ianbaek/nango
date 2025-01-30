@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import crypto from 'crypto';
 import type { StandardNangoConfig, Config as ProviderConfig, IntegrationWithCreds, Integration as ProviderIntegration, NangoSyncConfig } from '@nangohq/shared';
 import { isHosted } from '@nangohq/utils';
-import type { AuthModeType } from '@nangohq/types';
+import type { AuthModeType, ProviderTwoStep } from '@nangohq/types';
 import {
     flowService,
     errorManager,
@@ -19,7 +19,7 @@ import {
     getProvider,
     getProviders
 } from '@nangohq/shared';
-import { parseConnectionConfigParamsFromTemplate } from '../utils/utils.js';
+import { parseConnectionConfigParamsFromTemplate, parseCredentialParamsFromTemplate } from '../utils/utils.js';
 import type { RequestLocals } from '../utils/express.js';
 
 export interface Integration {
@@ -30,6 +30,8 @@ export interface Integration {
     scripts: number;
     creationDate: Date | undefined;
     connectionConfigParams?: string[];
+    credentialParams?: string[];
+    missing_fields_count: number;
 }
 
 export interface ListIntegration {
@@ -117,12 +119,10 @@ class ConfigController {
         try {
             const { environment } = res.locals;
 
-            const configs = await configService.listProviderConfigs(environment.id);
-
-            const connections = await connectionService.listConnections(environment.id);
+            const configs = await configService.listIntegrationForApi(environment.id);
 
             const integrations = await Promise.all(
-                configs.map(async (config: ProviderConfig) => {
+                configs.map(async (config) => {
                     const provider = getProvider(config.provider);
                     const activeFlows = await getFlowConfigsByParams(environment.id, config.unique_key);
 
@@ -131,12 +131,22 @@ class ConfigController {
                         uniqueKey: config.unique_key,
                         provider: config.provider,
                         scripts: activeFlows.length,
-                        connection_count: connections.filter((connection) => connection.provider === config.unique_key).length,
-                        creationDate: config.created_at
+                        connection_count: Number(config.connection_count),
+                        creationDate: config.created_at,
+                        missing_fields_count: config.missing_fields.length
                     };
 
-                    if (provider && provider.auth_mode !== 'APP' && provider.auth_mode !== 'CUSTOM') {
-                        integration['connectionConfigParams'] = parseConnectionConfigParamsFromTemplate(provider);
+                    // Used by legacy connection create
+                    // TODO: remove this
+                    if (provider) {
+                        if (provider.auth_mode !== 'APP' && provider.auth_mode !== 'CUSTOM') {
+                            integration['connectionConfigParams'] = parseConnectionConfigParamsFromTemplate(provider);
+                        }
+
+                        // Check if provider is of type ProviderTwoStep
+                        if (provider.auth_mode === 'TWO_STEP') {
+                            integration['credentialParams'] = parseCredentialParamsFromTemplate(provider as ProviderTwoStep);
+                        }
                     }
 
                     return integration;
@@ -410,13 +420,14 @@ class ConfigController {
                 app_link,
                 environment_id: environmentId,
                 created_at: new Date(),
-                updated_at: new Date()
+                updated_at: new Date(),
+                missing_fields: []
             };
             if (custom) {
                 config.custom = custom;
             }
 
-            const result = await configService.createProviderConfig(config);
+            const result = await configService.createProviderConfig(config, provider);
 
             if (result) {
                 void analytics.track(AnalyticsTypes.CONFIG_CREATED, accountId, { provider: result.provider });

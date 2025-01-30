@@ -20,17 +20,17 @@ export function refreshConnectionsCron(): void {
             const start = Date.now();
             try {
                 await exec();
-            } catch (err: unknown) {
+            } catch (err) {
                 const e = new Error('failed_to_refresh_connections', {
                     cause: err instanceof Error ? err.message : String(err)
                 });
-                errorManager.report(e, { source: ErrorSourceEnum.PLATFORM }, tracer);
+                errorManager.report(e, { source: ErrorSourceEnum.PLATFORM });
             } finally {
                 metrics.duration(metrics.Types.REFRESH_CONNECTIONS, Date.now() - start);
             }
-        })().catch((error: unknown) => {
+        })().catch((err: unknown) => {
             logger.error('Failed to execute refreshConnections cron job');
-            logger.error(error);
+            logger.error(err);
         });
     });
 }

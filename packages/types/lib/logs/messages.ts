@@ -43,6 +43,13 @@ export interface OperationAction {
     type: 'action';
     action: 'run';
 }
+
+export interface OperationOnEvents {
+    type: 'events';
+    action: 'post_connection_creation' | 'pre_connection_deletion';
+}
+
+// TODO: rename to OperationConnection
 export interface OperationAuth {
     type: 'auth';
     action: 'create_connection' | 'refresh_token' | 'post_connection' | 'connection_test';
@@ -53,13 +60,22 @@ export interface OperationAdmin {
 }
 export interface OperationWebhook {
     type: 'webhook';
-    action: 'incoming' | 'outgoing';
+    action: 'incoming' | 'forward' | 'sync';
 }
+
 export interface OperationDeploy {
     type: 'deploy';
     action: 'prebuilt' | 'custom';
 }
-export type OperationList = OperationSync | OperationProxy | OperationAction | OperationWebhook | OperationDeploy | OperationAuth | OperationAdmin;
+export type OperationList =
+    | OperationSync
+    | OperationProxy
+    | OperationAction
+    | OperationWebhook
+    | OperationOnEvents
+    | OperationDeploy
+    | OperationAuth
+    | OperationAdmin;
 
 /**
  * Full schema
@@ -115,10 +131,12 @@ export interface MessageRow {
         url: string;
         method: string;
         headers: Record<string, string>;
+        body?: unknown;
     } | null;
     response: {
         code: number;
         headers: Record<string, string>;
+        body?: unknown;
     } | null;
     meta: MessageMeta | null;
 

@@ -7,7 +7,8 @@ export type AuthErrorType =
     | 'windowClosed'
     | 'request_error'
     | 'missing_ws_client_id'
-    | 'connection_test_failed';
+    | 'connection_test_failed'
+    | 'missing_connect_session_token';
 
 export interface AuthResult {
     providerConfigKey: string;
@@ -17,7 +18,7 @@ export interface AuthResult {
 
 export type AuthOptions = {
     detectClosedAuthWindow?: boolean; // If true, `nango.auth()` would fail if the login window is closed before the authorization flow is completed
-} & (ConnectionConfig | OAuth2ClientCredentials | OAuthCredentialsOverride | BasicApiCredentials | ApiKeyCredentials | AppStoreCredentials);
+} & (ConnectionConfig | OAuthCredentialsOverride);
 
 export type ErrorHandler = (errorType: AuthErrorType, errorDesc: string) => void;
 
@@ -34,7 +35,9 @@ export interface ConnectionConfig {
         | TBACredentials
         | TableauCredentials
         | JwtCredentials
-        | OAuth2ClientCredentials;
+        | TwoStepCredentials
+        | OAuth2ClientCredentials
+        | SignatureCredentials;
 }
 
 export interface OAuthCredentialsOverride {
@@ -92,6 +95,16 @@ export interface BillCredentials {
     password: string;
     organization_id: string;
     dev_key: string;
+}
+
+export interface TwoStepCredentials {
+    type: 'TWO_STEP';
+}
+
+export interface SignatureCredentials {
+    type: 'SIGNATURE';
+    username: string;
+    password: string;
 }
 
 export enum AuthorizationStatus {

@@ -1,4 +1,4 @@
-import Button from '../../../components/ui/button/Button';
+import { Button } from '../../../components/ui/button/Button';
 import { useEffect, useMemo, useState } from 'react';
 import { CrossCircledIcon, MagnifyingGlassIcon } from '@radix-ui/react-icons';
 import { useSearchFilters } from '../../../hooks/useLogs';
@@ -79,7 +79,7 @@ export const SearchableMultiSelect: React.FC<SearchableMultiSelectArgs<any>> = (
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <Button variant="zombieGray" size={'xs'} className={cn('text-text-light-gray', isDirty && 'text-white')}>
+                <Button variant="zombieGray" size={'sm'} className={cn('text-text-light-gray', isDirty && 'text-white')}>
                     {label}
                     {isDirty && (
                         <button

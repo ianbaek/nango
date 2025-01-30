@@ -4,26 +4,26 @@ import chalk from 'chalk';
 import promptly from 'promptly';
 import type { AxiosResponse } from 'axios';
 import { AxiosError } from 'axios';
-import type { SyncDeploymentResult } from '@nangohq/shared';
 import type {
     NangoYamlParsed,
-    PostConnectionScriptByProvider,
+    OnEventScriptsByProvider,
     ScriptFileType,
     IncomingFlowConfig,
     NangoConfigMetadata,
     PostDeploy,
     PostDeployInternal,
-    PostDeployConfirmation
+    PostDeployConfirmation,
+    OnEventType
 } from '@nangohq/types';
-import { stagingHost, cloudHost } from '@nangohq/shared';
 import { compileSingleFile, compileAllFiles, resolveTsFileLocation, getFileToCompile } from './compile.service.js';
 
 import verificationService from './verification.service.js';
-import { printDebug, parseSecretKey, port, enrichHeaders, http, isCI } from '../utils.js';
+import { printDebug, parseSecretKey, enrichHeaders, http, isCI } from '../utils.js';
 import type { DeployOptions, InternalDeployOptions } from '../types.js';
 import { parse } from './config.service.js';
 import type { JSONSchema7 } from 'json-schema';
 import { loadSchemaJson } from './model.service.js';
+import { cloudHost, localhostUrl } from '../constants.js';
 
 class DeployService {
     public async admin({ fullPath, environmentName, debug = false }: { fullPath: string; environmentName: string; debug?: boolean }): Promise<void> {
@@ -34,10 +34,7 @@ class DeployService {
         if (!process.env['NANGO_HOSTPORT']) {
             switch (environmentName) {
                 case 'local':
-                    process.env['NANGO_HOSTPORT'] = `http://localhost:${port}`;
-                    break;
-                case 'staging':
-                    process.env['NANGO_HOSTPORT'] = stagingHost;
+                    process.env['NANGO_HOSTPORT'] = localhostUrl;
                     break;
                 default:
                     process.env['NANGO_HOSTPORT'] = cloudHost;
@@ -57,14 +54,14 @@ class DeployService {
             process.exit(1);
         }
 
-        const { success, error, response } = parse(fullPath, debug);
-
-        if (!success || !response!.parsed) {
-            console.log(chalk.red(error?.message));
+        const parsing = parse(fullPath, debug);
+        if (parsing.isErr()) {
+            console.log(chalk.red(parsing.error.message));
             return;
         }
 
-        const flowData = this.package({ parsed: response!.parsed, fullPath, debug });
+        const parser = parsing.value;
+        const flowData = this.package({ parsed: parser.parsed!, fullPath, debug });
 
         if (!flowData) {
             return;
@@ -83,7 +80,7 @@ class DeployService {
             await http
                 .post(
                     url,
-                    { targetAccountUUID, targetEnvironment: environmentName, parsed: flowData, nangoYamlBody: response!.yaml },
+                    { targetAccountUUID, targetEnvironment: environmentName, parsed: flowData, nangoYamlBody: parser.yaml },
                     { headers: enrichHeaders() }
                 )
                 .then(() => {
@@ -94,8 +91,8 @@ class DeployService {
                     console.log(chalk.red(`Error deploying the syncs/actions with the following error: ${errorMessage}`));
                     process.exit(1);
                 });
-        } catch (e) {
-            console.error(e);
+        } catch (err) {
+            console.error(err);
         }
     }
 
@@ -108,10 +105,7 @@ class DeployService {
         if (!process.env['NANGO_HOSTPORT']) {
             switch (env) {
                 case 'local':
-                    process.env['NANGO_HOSTPORT'] = `http://localhost:${port}`;
-                    break;
-                case 'staging':
-                    process.env['NANGO_HOSTPORT'] = stagingHost;
+                    process.env['NANGO_HOSTPORT'] = localhostUrl;
                     break;
                 default:
                     process.env['NANGO_HOSTPORT'] = cloudHost;
@@ -124,13 +118,13 @@ class DeployService {
             printDebug(`Environment is set to ${environment}`);
         }
 
-        const { success, error, response } = parse(fullPath, debug);
-
-        if (!success || !response?.parsed) {
-            console.log(chalk.red(error?.message));
+        const parsing = parse(fullPath, debug);
+        if (parsing.isErr()) {
+            console.log(chalk.red(parsing.error.message));
             return;
         }
 
+        const parser = parsing.value;
         const singleDeployMode = Boolean(optionalSyncName || optionalActionName);
 
         let successfulCompile = false;
@@ -138,7 +132,7 @@ class DeployService {
         if (singleDeployMode) {
             const scriptName: string = String(optionalSyncName || optionalActionName);
             const type = optionalSyncName ? 'syncs' : 'actions';
-            const providerConfigKey = response.parsed.integrations.find((integration) => {
+            const providerConfigKey = parser.parsed!.integrations.find((integration) => {
                 if (optionalSyncName) {
                     return integration.syncs.find((sync) => sync.name === scriptName);
                 } else {
@@ -154,7 +148,7 @@ class DeployService {
                         fullPath,
                         filePath: path.join(parentFilePath, `${scriptName}.ts`)
                     }),
-                    parsed: response.parsed,
+                    parsed: parser.parsed!,
                     debug
                 });
             }
@@ -167,12 +161,12 @@ class DeployService {
             process.exit(1);
         }
 
-        const postData = this.package({ parsed: response.parsed, fullPath, debug, version, optionalSyncName, optionalActionName });
+        const postData = this.package({ parsed: parser.parsed!, fullPath, debug, version, optionalSyncName, optionalActionName });
         if (!postData) {
             return;
         }
 
-        const nangoYamlBody = response.yaml;
+        const nangoYamlBody = parser.yaml;
 
         const url = process.env['NANGO_HOSTPORT'] + `/sync/deploy`;
         const bodyDeploy: PostDeploy['Body'] = { ...postData, reconcile: true, debug, nangoYamlBody, singleDeployMode };
@@ -275,7 +269,7 @@ class DeployService {
     public async deploy(url: string, body: PostDeploy['Body']) {
         await http
             .post(url, body, { headers: enrichHeaders() })
-            .then((response: AxiosResponse<SyncDeploymentResult[]>) => {
+            .then((response: AxiosResponse<PostDeploy['Success']>) => {
                 const results = response.data;
                 if (results.length === 0) {
                     console.log(chalk.green(`Successfully removed the syncs/actions.`));
@@ -311,10 +305,7 @@ class DeployService {
         if (!process.env['NANGO_HOSTPORT']) {
             switch (env) {
                 case 'local':
-                    process.env['NANGO_HOSTPORT'] = `http://localhost:${port}`;
-                    break;
-                case 'staging':
-                    process.env['NANGO_HOSTPORT'] = stagingHost;
+                    process.env['NANGO_HOSTPORT'] = localhostUrl;
                     break;
                 default:
                     process.env['NANGO_HOSTPORT'] = cloudHost;
@@ -327,13 +318,13 @@ class DeployService {
             printDebug(`Environment is set to ${environment}`);
         }
 
-        const { success, error, response } = parse(fullPath, debug);
-
-        if (!success || !response?.parsed) {
-            console.log(chalk.red(error?.message));
+        const parsing = parse(fullPath, debug);
+        if (parsing.isErr()) {
+            console.log(chalk.red(parsing.error.message));
             return;
         }
 
+        const parser = parsing.value;
         const successfulCompile = await compileAllFiles({ fullPath, debug });
 
         if (!successfulCompile) {
@@ -341,12 +332,12 @@ class DeployService {
             process.exit(1);
         }
 
-        const postData = this.package({ parsed: response.parsed, fullPath, debug });
+        const postData = this.package({ parsed: parser.parsed!, fullPath, debug });
         if (!postData) {
             return;
         }
 
-        const nangoYamlBody = response.yaml;
+        const nangoYamlBody = parser.yaml;
 
         const url = process.env['NANGO_HOSTPORT'] + `/sync/deploy/internal?customEnvironment=${environment}`;
 
@@ -369,24 +360,36 @@ class DeployService {
         version?: string | undefined;
         optionalSyncName?: string | undefined;
         optionalActionName?: string | undefined;
-    }): { flowConfigs: IncomingFlowConfig[]; postConnectionScriptsByProvider: PostConnectionScriptByProvider[]; jsonSchema: JSONSchema7 } | null {
+    }): { flowConfigs: IncomingFlowConfig[]; onEventScriptsByProvider: OnEventScriptsByProvider[] | undefined; jsonSchema: JSONSchema7 } | null {
         const postData: IncomingFlowConfig[] = [];
-        const postConnectionScriptsByProvider: PostConnectionScriptByProvider[] = [];
+        const onEventScriptsByProvider: OnEventScriptsByProvider[] | undefined = optionalActionName || optionalSyncName ? undefined : []; // only load on-event scripts if we're not deploying a single sync or action
 
         for (const integration of parsed.integrations) {
-            const { providerConfigKey, postConnectionScripts } = integration;
+            const { providerConfigKey, onEventScripts, postConnectionScripts } = integration;
 
-            if (postConnectionScripts && postConnectionScripts.length > 0) {
-                const scripts: PostConnectionScriptByProvider['scripts'] = [];
-                for (const postConnectionScript of postConnectionScripts) {
-                    const files = loadScriptFiles({ scriptName: postConnectionScript, providerConfigKey, fullPath, type: 'post-connection-scripts' });
-                    if (!files) {
-                        return null;
+            if (onEventScriptsByProvider) {
+                const scripts: OnEventScriptsByProvider['scripts'] = [];
+                for (const event of Object.keys(onEventScripts) as OnEventType[]) {
+                    for (const scriptName of onEventScripts[event]) {
+                        const files = loadScriptFiles({ scriptName: scriptName, providerConfigKey, fullPath, type: 'on-events' });
+                        if (!files) {
+                            console.log(chalk.red(`No script files found for "${scriptName}"`));
+                            return null;
+                        }
+                        scripts.push({ name: scriptName, fileBody: files, event });
                     }
-
-                    scripts.push({ name: postConnectionScript, fileBody: files });
                 }
-                postConnectionScriptsByProvider.push({ providerConfigKey, scripts });
+
+                // for backward compatibility we also load post-connection-creation scripts
+                for (const scriptName of postConnectionScripts || []) {
+                    const files = loadScriptFiles({ scriptName: scriptName, providerConfigKey, fullPath, type: 'post-connection-scripts' });
+                    if (files) {
+                        scripts.push({ name: scriptName, fileBody: files, event: 'post-connection-creation' });
+                    }
+                }
+                if (scripts.length > 0) {
+                    onEventScriptsByProvider.push({ providerConfigKey, scripts });
+                }
             }
 
             if (!optionalActionName) {
@@ -478,14 +481,14 @@ class DeployService {
             }
         }
 
-        if (debug && postConnectionScriptsByProvider) {
-            for (const postConnectionScriptByProvider of postConnectionScriptsByProvider) {
-                const { providerConfigKey, scripts } = postConnectionScriptByProvider;
+        if (debug && onEventScriptsByProvider) {
+            for (const onEventScriptByProvider of onEventScriptsByProvider) {
+                const { providerConfigKey, scripts } = onEventScriptByProvider;
 
                 for (const script of scripts) {
                     const { name } = script;
 
-                    printDebug(`Post connection script found for ${providerConfigKey} with name ${name}`);
+                    printDebug(`on-events script found for ${providerConfigKey} with name ${name}`);
                 }
             }
         }
@@ -495,7 +498,7 @@ class DeployService {
             return null;
         }
 
-        return { flowConfigs: postData, postConnectionScriptsByProvider, jsonSchema };
+        return { flowConfigs: postData, onEventScriptsByProvider, jsonSchema };
     }
 }
 
@@ -536,8 +539,8 @@ function loadScriptJsFile({ scriptName, providerConfigKey, fullPath }: { scriptN
         const content = fs.readFileSync(realPath, 'utf8');
 
         return content;
-    } catch (error) {
-        console.error(chalk.red(`Error loading file ${filePath}`), error instanceof Error ? error.message : error);
+    } catch (err) {
+        console.error(chalk.red(`Error loading file ${filePath}`), err instanceof Error ? err.message : err);
         return null;
     }
 }
@@ -559,8 +562,8 @@ function loadScriptTsFile({
         const tsIntegrationFileContents = fs.readFileSync(filePath, 'utf8');
 
         return tsIntegrationFileContents;
-    } catch (error) {
-        console.error(chalk.red(`Error loading file ${filePath}`), error);
+    } catch (err) {
+        console.error(chalk.red(`Error loading file ${filePath}`), err);
         return null;
     }
 }

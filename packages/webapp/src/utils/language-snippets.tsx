@@ -1,11 +1,12 @@
-import type { NangoModel, NangoSyncEndpoint } from '@nangohq/types';
+import type { NangoModel, NangoSyncEndpointV2 } from '@nangohq/types';
 import type { TargetId } from 'httpsnippet-lite';
 import { HTTPSnippet } from 'httpsnippet-lite';
 import type { NangoSyncModel } from '../types';
-import { isProd } from './utils';
 import { modelToString } from './scripts';
 
-const maskedKey = '<secret-key-from-environment-settings>';
+function maskSecret(secret: string): string {
+    return `${secret.substring(0, 4)}${'*'.repeat(secret.length - 4)}`;
+}
 
 export function nodeSyncSnippet({
     modelName,
@@ -18,10 +19,8 @@ export function nodeSyncSnippet({
     connectionId: string;
     providerConfigKey: string;
 }) {
-    const secretKeyDisplay = isProd() ? maskedKey : secretKey;
-
     return `import { Nango } from '@nangohq/node';
-const nango = new Nango({ secretKey: '${secretKeyDisplay}' });
+const nango = new Nango({ secretKey: '${maskSecret(secretKey)}' });
 
 const records = await nango.listRecords({
     providerConfigKey: '${providerConfigKey}',
@@ -44,10 +43,8 @@ export function nodeActionSnippet({
     providerConfigKey: string;
     input?: NangoModel | NangoSyncModel;
 }) {
-    const secretKeyDisplay = isProd() ? maskedKey : secretKey;
-
     let snippet = `import Nango from '@nangohq/node';
-const nango = new Nango({ secretKey: '${secretKeyDisplay}' });
+const nango = new Nango({ secretKey: '${maskSecret(secretKey)}' });
 
 const response = await nango.triggerAction(
     '${providerConfigKey}',
@@ -73,21 +70,18 @@ export async function httpSnippet({
     input
 }: {
     baseUrl: string;
-    endpoint: NangoSyncEndpoint;
+    endpoint: NangoSyncEndpointV2;
     secretKey: string;
     connectionId: string;
     providerConfigKey: string;
     language: TargetId;
     input?: NangoModel | NangoSyncModel | undefined;
 }) {
-    const [method, path] = Object.entries(endpoint)[0];
-    const secretKeyDisplay = isProd() ? maskedKey : secretKey;
-
     const snippet = new HTTPSnippet({
-        method,
-        url: `${baseUrl}/v1${path}`,
+        method: endpoint.method,
+        url: `${baseUrl}/v1${endpoint.path}`,
         headers: [
-            { name: 'Authorization', value: `Bearer ${secretKeyDisplay}` },
+            { name: 'Authorization', value: `Bearer ${maskSecret(secretKey)}` },
             { name: 'Content-Type', value: 'application/json' },
             { name: 'Connection-Id', value: connectionId },
             { name: 'Provider-Config-Key', value: providerConfigKey }

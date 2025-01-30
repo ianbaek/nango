@@ -50,8 +50,8 @@ interface WebhookArgs {
     input: JsonValue;
 }
 
-interface PostConnectionArgs {
-    postConnectionName: string;
+interface OnEventArgs {
+    onEventName: string;
     connection: {
         id: number;
         connection_id: string;
@@ -68,7 +68,7 @@ export type ExecuteProps = SetOptional<ImmediateProps, 'retry' | 'timeoutSetting
 export type ExecuteReturn = Result<JsonValue, ClientError>;
 export type ExecuteActionProps = Omit<ExecuteProps, 'args'> & { args: ActionArgs };
 export type ExecuteWebhookProps = Omit<ExecuteProps, 'args'> & { args: WebhookArgs };
-export type ExecutePostConnectionProps = Omit<ExecuteProps, 'args'> & { args: PostConnectionArgs };
+export type ExecuteOnEventProps = Omit<ExecuteProps, 'args'> & { args: OnEventArgs };
 export type ExecuteSyncProps = PostScheduleRun['Body'];
 
 export interface OrchestratorSchedule {
@@ -79,7 +79,7 @@ export interface OrchestratorSchedule {
     nextDueDate: Date | null;
 }
 
-export type OrchestratorTask = TaskSync | TaskSyncAbort | TaskAction | TaskWebhook | TaskPostConnection;
+export type OrchestratorTask = TaskSync | TaskSyncAbort | TaskAction | TaskWebhook | TaskOnEvent;
 
 interface TaskCommonFields {
     id: string;
@@ -92,7 +92,7 @@ interface TaskCommon extends TaskCommonFields {
     isSync(this: OrchestratorTask): this is TaskSync;
     isWebhook(this: OrchestratorTask): this is TaskWebhook;
     isAction(this: OrchestratorTask): this is TaskAction;
-    isPostConnection(this: OrchestratorTask): this is TaskPostConnection;
+    isOnEvent(this: OrchestratorTask): this is TaskOnEvent;
     isSyncAbort(this: OrchestratorTask): this is TaskSyncAbort;
 }
 
@@ -108,11 +108,11 @@ export function TaskSync(props: TaskCommonFields & SyncArgs): TaskSync {
         debug: props.debug,
         connection: props.connection,
         groupKey: props.groupKey,
-        isSync: () => true,
-        isWebhook: () => false,
-        isAction: () => false,
-        isPostConnection: () => false,
-        isSyncAbort: () => false
+        isSync: (): this is TaskSync => true,
+        isWebhook: (): this is TaskWebhook => false,
+        isAction: (): this is TaskAction => false,
+        isOnEvent: (): this is TaskOnEvent => false,
+        isSyncAbort: (): this is TaskSyncAbort => false
     };
 }
 
@@ -130,11 +130,11 @@ export function TaskSyncAbort(props: TaskCommonFields & SyncArgs & AbortArgs): T
         connection: props.connection,
         groupKey: props.groupKey,
         reason: props.reason,
-        isSync: () => false,
-        isWebhook: () => false,
-        isAction: () => false,
-        isPostConnection: () => false,
-        isSyncAbort: () => true
+        isSync: (): this is TaskSync => false,
+        isWebhook: (): this is TaskWebhook => false,
+        isAction: (): this is TaskAction => false,
+        isOnEvent: (): this is TaskOnEvent => false,
+        isSyncAbort: (): this is TaskSyncAbort => true
     };
 }
 
@@ -150,11 +150,11 @@ export function TaskAction(props: TaskCommonFields & ActionArgs): TaskAction {
         activityLogId: props.activityLogId,
         input: props.input,
         groupKey: props.groupKey,
-        isSync: () => false,
-        isWebhook: () => false,
-        isAction: () => true,
-        isPostConnection: () => false,
-        isSyncAbort: () => false
+        isSync: (): this is TaskSync => false,
+        isWebhook: (): this is TaskWebhook => false,
+        isAction: (): this is TaskAction => true,
+        isOnEvent: (): this is TaskOnEvent => false,
+        isSyncAbort: (): this is TaskSyncAbort => false
     };
 }
 
@@ -171,36 +171,37 @@ export function TaskWebhook(props: TaskCommonFields & WebhookArgs): TaskWebhook 
         activityLogId: props.activityLogId,
         input: props.input,
         groupKey: props.groupKey,
-        isSync: () => false,
-        isWebhook: () => true,
-        isAction: () => false,
-        isPostConnection: () => false,
-        isSyncAbort: () => false
+        isSync: (): this is TaskSync => false,
+        isWebhook: (): this is TaskWebhook => true,
+        isAction: (): this is TaskAction => false,
+        isOnEvent: (): this is TaskOnEvent => false,
+        isSyncAbort: (): this is TaskSyncAbort => false
     };
 }
 
-export interface TaskPostConnection extends TaskCommon, PostConnectionArgs {}
-export function TaskPostConnection(props: TaskCommonFields & PostConnectionArgs): TaskPostConnection {
+export interface TaskOnEvent extends TaskCommon, OnEventArgs {}
+export function TaskOnEvent(props: TaskCommonFields & OnEventArgs): TaskOnEvent {
     return {
         id: props.id,
         state: props.state,
         name: props.name,
         attempt: props.attempt,
-        postConnectionName: props.postConnectionName,
+        onEventName: props.onEventName,
         version: props.version,
         connection: props.connection,
         fileLocation: props.fileLocation,
         activityLogId: props.activityLogId,
         groupKey: props.groupKey,
-        isSync: () => false,
-        isWebhook: () => false,
-        isAction: () => false,
-        isPostConnection: () => true,
-        isSyncAbort: () => false
+        isSync: (): this is TaskSync => false,
+        isWebhook: (): this is TaskWebhook => false,
+        isAction: (): this is TaskAction => false,
+        isOnEvent: (): this is TaskOnEvent => true,
+        isSyncAbort: (): this is TaskSyncAbort => false
     };
 }
 
 export interface ClientError extends Error {
     name: string;
     payload: JsonValue;
+    additional_properties?: Record<string, JsonValue>;
 }

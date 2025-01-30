@@ -17,17 +17,17 @@ import syncManager, { syncCommandToOperation } from './services/sync/manager.ser
 import flowService from './services/flow.service.js';
 import { errorNotificationService } from './services/notification/error.service.js';
 import analytics, { AnalyticsTypes } from './utils/analytics.js';
-import featureFlags from './utils/featureflags.js';
+import featureFlags, { FeatureFlags } from './utils/featureflags.js';
 import { Orchestrator } from './clients/orchestrator.js';
 import { SlackService, generateSlackConnectionId } from './services/notification/slack.service.js';
 
-export * from './services/sync/post-connection.service.js';
+export * from './services/on-event-scripts.service.js';
 export * from './services/sync/sync.service.js';
 export * from './services/sync/job.service.js';
-export * from './services/sync/run.utils.js';
 export * from './services/sync/config/config.service.js';
 export * from './services/sync/config/endpoint.service.js';
 export * from './services/sync/config/deploy.service.js';
+export * from './services/endUser.service.js';
 export * from './services/onboarding.service.js';
 export * from './services/invitations.js';
 export * from './services/providers.js';
@@ -40,16 +40,13 @@ export * from './clients/locking.js';
 export * from './utils/lock/locking.js';
 export * from './clients/locking.js';
 
-export * from './services/nango-config.service.js';
-
 export * from './models/index.js';
 
 export * from './utils/utils.js';
 export * from './utils/error.js';
 export * from './constants.js';
 
-export * from './sdk/sync.js';
-export * from './sdk/dataValidation.js';
+export { getRoutes as getOtlpRoutes } from './otlp/otlp.js';
 
 export { NANGO_VERSION } from './version.js';
 
@@ -78,6 +75,7 @@ export {
     errorNotificationService,
     analytics,
     AnalyticsTypes,
+    FeatureFlags,
     featureFlags,
     syncCommandToOperation,
     Orchestrator,
